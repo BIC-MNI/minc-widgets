@@ -1,9 +1,6 @@
 #! /usr/bin/env perl
 #
 # Andrew Janke - a.janke@gmail.com
-# Center for Magnetic Resonance
-# The University of Queensland
-# http://www.cmr.uq.edu.au/~rotor
 #
 # Copyright Andrew Janke, The University of Queensland.
 # Permission to use, copy, modify, and distribute this software and its
@@ -12,9 +9,6 @@
 # author and the University of Queensland make no representations about the
 # suitability of this software for any purpose.  It is provided "as is"
 # without express or implied warranty.
-#
-# Fri Jun 20 17:30:06 EST 2003 - initial version
-# Fri Mar 18 11:29:29 EST 2005 - added arbitrary rotation
 
 
 use strict;
@@ -34,6 +28,7 @@ $tmpdir = "/tmp/$me-$$";
         'x_rot' => 0,
         'y_rot' => 0,
         'z_rot' => 0,
+        'xfm_fname' => undef, 
         );
 
 $Help = <<HELP;
@@ -52,16 +47,21 @@ $Usage = "\nUsage: $me [options] <in.mnc> <out.mnc>\n".
       "clobber existing files" ],
    ["-fake", "boolean", 0, \$opt{fake},
       "do a dry run, (echo cmds only)" ],
+      
    ["-right", "const", -90, \$opt{'z_rot'}, 
       "rotate 90 degrees to patients right (Default)" ],
    ["-left", "const", 90, \$opt{'z_rot'}, 
       "rotate 90 degrees to patients left" ],
+   
    ["-x_rotation", "float", 1, \$opt{'x_rot'}, 
       "x rotation" ],
    ["-y_rotation", "float", 1, \$opt{'y_rot'}, 
       "y rotation" ],
    ["-z_rotation", "float", 1, \$opt{'z_rot'}, 
       "z rotation" ],
+      
+   ["-xfm_fname", "string",  1, \$opt{xfm_fname}, 
+      "Keep and save the resulting xfm file" ],
    );
 
 # Check arguments
@@ -99,16 +99,28 @@ my($x_cor) = $xstart + (($xlength-1)/2 * $xstep);
 my($y_cor) = $ystart + (($ylength-1)/2 * $ystep);
 my($z_cor) = $zstart + (($zlength-1)/2 * $zstep);
 
+# set up and check for xfm filename
+if(defined($opt{xfm_fname})){
+   if(-e $opt{xfm_fname} && !$opt{'clobber'}){
+      die "$me: $opt{xfm_fname} exists!, use -clobber to overwrite\n";
+      }
+   }
+else{
+   $opt{xfm_fname} = "$tmpdir/rot.xfm";
+   }
+
 # make transform
+unlink $opt{xfm_fname};
 &do_cmd('param2xfm', '-clobber', 
         '-rotations', $opt{x_rot}, $opt{y_rot}, $opt{'z_rot'},
         '-center', $x_cor, $y_cor, $z_cor,
-        "$tmpdir/rot.xfm");
+        $opt{xfm_fname});
 
 # resample the volume
+
 &do_cmd('mincresample', '-clobber',
         '-use_input_sampling', '-nearest_neighbour',
-        '-transformation', "$tmpdir/rot.xfm",
+        '-transformation', $opt{xfm_fname},
         $infile, $outfile);
 
 

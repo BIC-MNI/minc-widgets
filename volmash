@@ -1,0 +1,110 @@
+#! /usr/bin/env perl
+#
+# Andrew Janke - a.janke@gmail.com
+#
+# Copyright Andrew Janke, Australian National University.
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies.
+#
+# The author and the University make no representations about the
+# suitability of this software for any purpose.  It is provided "as is"
+# without express or implied warranty.
+
+use strict;
+use warnings "all";
+use Getopt::Tabular;
+use File::Basename;
+use File::Temp qw/ tempdir /;
+
+my($Help, $Usage, $me);
+my(@opt_table, %opt, $infile, $outfile, @args, $tmpdir);
+
+$me = &basename($0);
+%opt = (
+   'verbose'   => 0,
+   'clobber'   => 0,
+   'swap'      => "yz",
+   );
+
+$Help = <<HELP;
+| $me does various dodgy things to a MINC file that you really
+|    whould note ver have to do but often are forced to due
+|    to incorrect conversions and the likes.
+| 
+| In short, I dont like this and it should not be used unless
+|    you like living on the edge and opening cereal packets
+|    the wrong way up and those sorts of things.
+| 
+| Problems or comments should be sent to: a.janke\@gmail.com
+HELP
+
+$Usage = "Usage: $me [options] <infile.mnc> <outfile.mnc>\n".
+         "       $me -help to list options\n\n";
+
+@opt_table = (
+   ["-verbose", "boolean", 0, \$opt{verbose},
+      "be verbose" ],
+   ["-clobber", "boolean", 0, \$opt{clobber},
+      "clobber existing check files" ],
+   ["-fake", "boolean", 0, \$opt{fake},
+      "do a dry run, (echo cmds only)" ],
+      
+   ["-swap", "string", '1', \$opt{swap},
+      "swap the indicated dimensions. This is usually only needed" .
+      " after a bodgy conversion from some other brain dead format" .
+      " that has no clue about right way up and the likes" ],
+   );
+
+# check args
+&Getopt::Tabular::SetHelp($Help, $Usage);
+&GetOptions(\@opt_table, \@ARGV) || exit 1;
+die $Usage if($#ARGV != 1);
+$infile = shift(@ARGV);
+$outfile = shift(@ARGV);
+
+# check for files
+die "$me: Couldn't find input file: $infile\n" if (!-e $infile);
+if(-e $outfile && !$opt{clobber}){
+   die "$me: $outfile exists, -clobber to overwrite\n";
+   }
+
+# make tmpdir
+$tmpdir = &tempdir( "$me-XXXXXXXX", TMPDIR => 1, CLEANUP => 1 );
+
+
+my($first_dir, $second_dir);
+
+# get the -swap thingos
+$first_dir = substr($opt{swap}, 0, 1);
+$second_dir = substr($opt{swap}, 1, 1);
+
+# mashing time
+open(HDR, "mincheader $infile |");
+open(OUT, " | ncgen -o $outfile");
+
+# time to fiddle
+foreach (<HDR>){
+   s/${first_dir}space/froodypooopers/g;
+   s/${second_dir}space/${first_dir}space/g;
+   s/froodypooopers/${second_dir}space/g;
+   
+   print "$_";
+   
+   print OUT;
+   }
+
+close(HDR);
+close(OUT);
+
+# copy the data over
+&do_cmd('minccopy', $infile, $outfile);
+
+
+
+sub do_cmd { 
+   print STDOUT "@_\n" if $opt{verbose};
+   if(!$opt{fake}){
+      system(@_) == 0 or die;
+      }
+   }

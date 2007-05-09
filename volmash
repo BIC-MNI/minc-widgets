@@ -89,8 +89,6 @@ foreach (<HDR>){
    s/${second_dir}space/${first_dir}space/g;
    s/froodypooopers/${second_dir}space/g;
    
-   print "$_";
-   
    print OUT;
    }
 
@@ -99,6 +97,22 @@ close(OUT);
 
 # copy the data over
 &do_cmd('minccopy', $infile, $outfile);
+
+# now fix up a few things
+my($a, $b);
+chomp($a = `mincinfo -attvalue ${first_dir}space:comments $outfile`);
+chomp($b = `mincinfo -attvalue ${second_dir}space:comments $outfile`);
+&do_cmd('minc_modify_header', '-sinsert', "${first_dir}space:comments=$a", $outfile);
+&do_cmd('minc_modify_header', '-sinsert', "${second_dir}space:comments=$b", $outfile);
+
+chomp($a = `mincinfo -attvalue ${first_dir}space:direction_cosines $outfile`);
+chomp($b = `mincinfo -attvalue ${second_dir}space:direction_cosines $outfile`);
+$a =~ s/\ $//;   $a =~ s/\ /\,/g;
+$b =~ s/\ $//;   $b =~ s/\ /\,/g;
+&do_cmd('minc_modify_header', '-dinsert', "${first_dir}space:direction_cosines=$a", $outfile);
+&do_cmd('minc_modify_header', '-dinsert', "${second_dir}space:direction_cosines=$b", $outfile);
+
+
 
 
 

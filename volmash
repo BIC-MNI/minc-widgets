@@ -2,14 +2,16 @@
 #
 # Andrew Janke - a.janke@gmail.com
 #
-# Copyright Andrew Janke, Australian National University.
+# Copyright Andrew Janke
+# The Australian National University
+#
 # Permission to use, copy, modify, and distribute this software and its
 # documentation for any purpose and without fee is hereby granted,
 # provided that the above copyright notice appear in all copies.
-#
 # The author and the University make no representations about the
 # suitability of this software for any purpose.  It is provided "as is"
 # without express or implied warranty.
+
 
 use strict;
 use warnings "all";
@@ -29,12 +31,13 @@ $me = &basename($0);
 
 $Help = <<HELP;
 | $me does various dodgy things to a MINC file that you really
-|    whould note ver have to do but often are forced to due
-|    to incorrect conversions and the likes.
+|    should not ever have to do but often are forced to due
+|    to broken conversions and the likes.
 | 
 | In short, I dont like this and it should not be used unless
-|    you like living on the edge and opening cereal packets
-|    the wrong way up and those sorts of things.
+|    you like living on the edge. Things like opening cereal
+|    packets the wrong way up, drinking undiluted cordial, 
+|    eating out of date pistachio nuts and other such things.
 | 
 | Problems or comments should be sent to: a.janke\@gmail.com
 HELP
@@ -53,7 +56,7 @@ $Usage = "Usage: $me [options] <infile.mnc> <outfile.mnc>\n".
    ["-swap", "string", '1', \$opt{swap},
       "swap the indicated dimensions. This is usually only needed" .
       " after a bodgy conversion from some other brain dead format" .
-      " that has no clue about right way up and the likes" ],
+      " that has no clue about right way up or Left from Right" ],
    );
 
 # check args
@@ -81,7 +84,7 @@ $second_dir = substr($opt{swap}, 1, 1);
 
 # mashing time
 open(HDR, "mincheader $infile |");
-open(OUT, " | ncgen -o $outfile");
+open(OUT, " | mincgen -o $outfile");
 
 # time to fiddle
 foreach (<HDR>){
@@ -100,18 +103,36 @@ close(OUT);
 
 # now fix up a few things
 my($a, $b);
+
+# swap dimension comments (or else risk subsequent confusion!)
 chomp($a = `mincinfo -attvalue ${first_dir}space:comments $outfile`);
 chomp($b = `mincinfo -attvalue ${second_dir}space:comments $outfile`);
-&do_cmd('minc_modify_header', '-sinsert', "${first_dir}space:comments=$a", $outfile);
-&do_cmd('minc_modify_header', '-sinsert', "${second_dir}space:comments=$b", $outfile);
+&do_cmd('minc_modify_header', '-sinsert', "${first_dir}space:comments=$b", $outfile);
+&do_cmd('minc_modify_header', '-sinsert', "${second_dir}space:comments=$a", $outfile);
 
-chomp($a = `mincinfo -attvalue ${first_dir}space:direction_cosines $outfile`);
-chomp($b = `mincinfo -attvalue ${second_dir}space:direction_cosines $outfile`);
-$a =~ s/\ $//;   $a =~ s/\ /\,/g;
-$b =~ s/\ $//;   $b =~ s/\ /\,/g;
-&do_cmd('minc_modify_header', '-dinsert', "${first_dir}space:direction_cosines=$a", $outfile);
-&do_cmd('minc_modify_header', '-dinsert', "${second_dir}space:direction_cosines=$b", $outfile);
+# swap any direction cosines that might exist
+chomp($a = `mincinfo -error_string NONE -attvalue ${first_dir}space:direction_cosines $outfile`);
+chomp($b = `mincinfo -error_string NONE -attvalue ${second_dir}space:direction_cosines $outfile`);
 
+# handle the case where only one dimension has direction_cosines
+&do_cmd('minc_modify_header', 
+   '-delete', "${first_dir}space:direction_cosines", $outfile);
+&do_cmd('minc_modify_header', 
+   '-delete', "${second_dir}space:direction_cosines", $outfile);
+
+if($a ne "NONE"){
+   $a =~ s/\ $//;
+   $a =~ s/\ /\,/g;
+   &do_cmd('minc_modify_header', 
+      '-dinsert', "${second_dir}space:direction_cosines=$a", $outfile);
+   }
+   
+if($b ne "NONE"){
+   $b =~ s/\ $//;
+   $b =~ s/\ /\,/g;
+   &do_cmd('minc_modify_header', 
+      '-dinsert', "${first_dir}space:direction_cosines=$b", $outfile);
+   }
 
 
 

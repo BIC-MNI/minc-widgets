@@ -19,14 +19,15 @@ use Getopt::Tabular;
 use File::Basename;
 use File::Temp qw/ tempdir /;
 
-my($Help, $Usage, $me);
+my($Help, $Usage, $me, $history);
 my(@opt_table, %opt, $infile, $outfile, @args, $tmpdir);
 
 $me = &basename($0);
 %opt = (
    'verbose'   => 0,
    'clobber'   => 0,
-   'swap'      => "yz",
+   'swap'      => undef,
+   'stepscale' => undef,
    );
 
 $Help = <<HELP;
@@ -37,7 +38,12 @@ $Help = <<HELP;
 | In short, I dont like this and it should not be used unless
 |    you like living on the edge. Things like opening cereal
 |    packets the wrong way up, drinking undiluted cordial, 
-|    eating out of date pistachio nuts and other such things.
+|    and eating out of date pistachio nuts while swimming with
+|    canadians.
+|
+| Note that using multiple C/L arguments all at once and expecting
+|    them all to play nice with each other might also produce
+|    "surprising" results. Sometimes not pleasant ones.
 | 
 | Problems or comments should be sent to: a.janke\@gmail.com
 HELP
@@ -46,18 +52,27 @@ $Usage = "Usage: $me [options] <infile.mnc> <outfile.mnc>\n".
          "       $me -help to list options\n\n";
 
 @opt_table = (
-   ["-verbose", "boolean", 0, \$opt{verbose},
+   ["-verbose", "boolean", 0, \$opt{'verbose'},
       "be verbose" ],
-   ["-clobber", "boolean", 0, \$opt{clobber},
+   ["-clobber", "boolean", 0, \$opt{'clobber'},
       "clobber existing check files" ],
-   ["-fake", "boolean", 0, \$opt{fake},
+   ["-fake", "boolean", 0, \$opt{'fake'},
       "do a dry run, (echo cmds only)" ],
       
-   ["-swap", "string", '1', \$opt{swap},
-      "swap the indicated dimensions. This is usually only needed" .
+   ["-swap", "string", '1', \$opt{'swap'},
+      "swap the indicated dimensions. Uusually only needed" .
       " after a bodgy conversion from some other brain dead format" .
-      " that has no clue about right way up or Left from Right" ],
+      " that has no clue about Up/Down let alone Left from Right" .
+      "eg: 'yz'" ],
+      
+   ["-stepscale", "float", '1', \$opt{'stepscale'},
+      "scale the steps (And start) in all dimensions" .
+      " usually for messing with little data" ],
    );
+   
+# get history string
+chomp($history = `date`);
+$history .= '>>>> ' . join(' ', $me, @ARGV);
 
 # check args
 &Getopt::Tabular::SetHelp($Help, $Usage);
@@ -75,66 +90,106 @@ if(-e $outfile && !$opt{clobber}){
 # make tmpdir
 $tmpdir = &tempdir( "$me-XXXXXXXX", TMPDIR => 1, CLEANUP => 1 );
 
-
-my($first_dir, $second_dir);
-
-# get the -swap thingos
-$first_dir = substr($opt{swap}, 0, 1);
-$second_dir = substr($opt{swap}, 1, 1);
-
-# mashing time
-open(HDR, "mincheader $infile |");
-open(OUT, " | mincgen -o $outfile");
-
-# time to fiddle
-foreach (<HDR>){
-   s/${first_dir}space/froodypooopers/g;
-   s/${second_dir}space/${first_dir}space/g;
-   s/froodypooopers/${second_dir}space/g;
+if(defined($opt{'swap'})){
+   my($first_dir, $second_dir);
    
-   print OUT;
-   }
-
-close(HDR);
-close(OUT);
-
-# copy the data over
-&do_cmd('minccopy', $infile, $outfile);
-
-# now fix up a few things
-my($a, $b);
-
-# swap dimension comments (or else risk subsequent confusion!)
-chomp($a = `mincinfo -attvalue ${first_dir}space:comments $outfile`);
-chomp($b = `mincinfo -attvalue ${second_dir}space:comments $outfile`);
-&do_cmd('minc_modify_header', '-sinsert', "${first_dir}space:comments=$b", $outfile);
-&do_cmd('minc_modify_header', '-sinsert', "${second_dir}space:comments=$a", $outfile);
-
-# swap any direction cosines that might exist
-chomp($a = `mincinfo -error_string NONE -attvalue ${first_dir}space:direction_cosines $outfile`);
-chomp($b = `mincinfo -error_string NONE -attvalue ${second_dir}space:direction_cosines $outfile`);
-
-# handle the case where only one dimension has direction_cosines
-&do_cmd('minc_modify_header', 
-   '-delete', "${first_dir}space:direction_cosines", $outfile);
-&do_cmd('minc_modify_header', 
-   '-delete', "${second_dir}space:direction_cosines", $outfile);
-
-if($a ne "NONE"){
-   $a =~ s/\ $//;
-   $a =~ s/\ /\,/g;
-   &do_cmd('minc_modify_header', 
-      '-dinsert', "${second_dir}space:direction_cosines=$a", $outfile);
-   }
+   # get the -swap thingos
+   $first_dir = substr($opt{swap}, 0, 1);
+   $second_dir = substr($opt{swap}, 1, 1);
    
-if($b ne "NONE"){
-   $b =~ s/\ $//;
-   $b =~ s/\ /\,/g;
+   # mashing time
+   open(HDR, "mincheader $infile |");
+   open(OUT, " | mincgen -o $outfile");
+   
+   # time to fiddle
+   foreach (<HDR>){
+      s/${first_dir}space/froodypooopers/g;
+      s/${second_dir}space/${first_dir}space/g;
+      s/froodypooopers/${second_dir}space/g;
+      
+      print OUT;
+      }
+   
+   close(HDR);
+   close(OUT);
+   
+   # copy the data over
+   &do_cmd('minccopy', $infile, $outfile);
+   
+   # now fix up a few things
+   my($a, $b);
+   
+   # swap dimension comments (or else risk subsequent confusion!)
+   chomp($a = `mincinfo -attvalue ${first_dir}space:comments $outfile`);
+   chomp($b = `mincinfo -attvalue ${second_dir}space:comments $outfile`);
+   &do_cmd('minc_modify_header', '-sinsert', "${first_dir}space:comments=$b", $outfile);
+   &do_cmd('minc_modify_header', '-sinsert', "${second_dir}space:comments=$a", $outfile);
+   
+   # swap any direction cosines that might exist
+   chomp($a = `mincinfo -error_string NONE -attvalue ${first_dir}space:direction_cosines $outfile`);
+   chomp($b = `mincinfo -error_string NONE -attvalue ${second_dir}space:direction_cosines $outfile`);
+   
+   # handle the case where only one dimension has direction_cosines
    &do_cmd('minc_modify_header', 
-      '-dinsert', "${first_dir}space:direction_cosines=$b", $outfile);
+      '-delete', "${first_dir}space:direction_cosines", $outfile);
+   &do_cmd('minc_modify_header', 
+      '-delete', "${second_dir}space:direction_cosines", $outfile);
+   
+   if($a ne "NONE"){
+      $a =~ s/\ $//;
+      $a =~ s/\ /\,/g;
+      &do_cmd('minc_modify_header', 
+         '-dinsert', "${second_dir}space:direction_cosines=$a", $outfile);
+      }
+      
+   if($b ne "NONE"){
+      $b =~ s/\ $//;
+      $b =~ s/\ /\,/g;
+      &do_cmd('minc_modify_header', 
+         '-dinsert', "${first_dir}space:direction_cosines=$b", $outfile);
+      }
    }
 
+if(defined($opt{'stepscale'})){
+   my($xstep, $ystep, $zstep, $xstart, $ystart, $zstart);
+   
+   print STDOUT "Scaling steps/starts by $opt{'stepscale'}\n";
+   
+   &do_cmd('cp', $infile, $outfile);
 
+   # get steps
+   chomp($xstep = `mincinfo -attvalue xspace:step $infile`);
+   chomp($ystep = `mincinfo -attvalue yspace:step $infile`);
+   chomp($zstep = `mincinfo -attvalue zspace:step $infile`);
+   
+   chomp($xstart = `mincinfo -attvalue xspace:start $infile`);
+   chomp($ystart = `mincinfo -attvalue yspace:start $infile`);
+   chomp($zstart = `mincinfo -attvalue zspace:start $infile`);
+
+   # scale them
+   $xstep *= $opt{'stepscale'};
+   $ystep *= $opt{'stepscale'};
+   $zstep *= $opt{'stepscale'};
+   
+   $xstart *= $opt{'stepscale'};
+   $ystart *= $opt{'stepscale'};
+   $zstart *= $opt{'stepscale'};
+   
+   print STDOUT "Setting to \n   ($xstart:$ystart:$zstart)\n   ($xstep:$ystep:$zstep)\n";
+   
+   # put them back in
+   &do_cmd('minc_modify_header', '-dinsert', "xspace:step=$xstep", $outfile);
+   &do_cmd('minc_modify_header', '-dinsert', "yspace:step=$ystep", $outfile);
+   &do_cmd('minc_modify_header', '-dinsert', "zspace:step=$zstep", $outfile);
+   &do_cmd('minc_modify_header', '-dinsert', "xspace:start=$xstart", $outfile);
+   &do_cmd('minc_modify_header', '-dinsert', "yspace:start=$ystart", $outfile);
+   &do_cmd('minc_modify_header', '-dinsert', "zspace:start=$zstart", $outfile);
+   }
+
+# add the history string to the output file
+&dd_cmd('minc_modify_header',
+   '-sappend', ":history='$history'",
+   $outfile);
 
 
 sub do_cmd { 

@@ -187,7 +187,7 @@ if(defined($opt{'stepscale'})){
    }
 
 # add the history string to the output file
-&dd_cmd('minc_modify_header',
+&do_cmd('minc_modify_header',
    '-sappend', ":history='$history'",
    $outfile);
 

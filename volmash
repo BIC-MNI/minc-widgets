@@ -24,10 +24,11 @@ my(@opt_table, %opt, $infile, $outfile, @args, $tmpdir);
 
 $me = &basename($0);
 %opt = (
-   'verbose'   => 0,
-   'clobber'   => 0,
-   'swap'      => undef,
+   'verbose' => 0,
+   'clobber' => 0,
+   'swap' => undef,
    'stepscale' => undef,
+   'salami' => undef,
    );
 
 $Help = <<HELP;
@@ -42,8 +43,8 @@ $Help = <<HELP;
 |    canadians.
 |
 | Note that using multiple C/L arguments all at once and expecting
-|    them all to play nice with each other might also produce
-|    "surprising" results. Sometimes not pleasant ones.
+|    them all to play nice with each other will produce
+|    "surprising" results and odds are not pleasant ones.
 | 
 | Problems or comments should be sent to: a.janke\@gmail.com
 HELP
@@ -60,7 +61,7 @@ $Usage = "Usage: $me [options] <infile.mnc> <outfile.mnc>\n".
       "do a dry run, (echo cmds only)" ],
       
    ["-swap", "string", '1', \$opt{'swap'},
-      "swap the indicated dimensions. Uusually only needed" .
+      "swap the indicated dimensions. Usually only needed" .
       " after a bodgy conversion from some other brain dead format" .
       " that has no clue about Up/Down let alone Left from Right" .
       "eg: 'yz'" ],
@@ -68,11 +69,22 @@ $Usage = "Usage: $me [options] <infile.mnc> <outfile.mnc>\n".
    ["-stepscale", "float", '1', \$opt{'stepscale'},
       "scale the steps (And start) in all dimensions" .
       " usually for messing with little data" ],
+
+   ["-resetdircos", "boolean", 0, \$opt{'resetdircos'},
+      "reset the direction cosines to the default"],
+   
+   ["-salami", "string", 1, \$opt{'salami'},
+      "extract a regular series of slices from a volume " .
+      "syntax: <offset>+<step><dimension> " .
+      "[offset: number of slices to skip first] ".
+      "[step: number of slices to skip between slices] ".
+      "[dimension: dimension in which to slice] ".
+      "eg: 5+2z = every 2nd slice in z starting with the 5th slice"],
    );
    
 # get history string
 chomp($history = `date`);
-$history .= '>>>> ' . join(' ', $me, @ARGV);
+$history .= '>>>> ' . join(' ', $me, @ARGV) . "\n";
 
 # check args
 &Getopt::Tabular::SetHelp($Help, $Usage);
@@ -83,7 +95,7 @@ $outfile = shift(@ARGV);
 
 # check for files
 die "$me: Couldn't find input file: $infile\n" if (!-e $infile);
-if(-e $outfile && !$opt{clobber}){
+if(-e $outfile && !$opt{'clobber'}){
    die "$me: $outfile exists, -clobber to overwrite\n";
    }
 
@@ -94,8 +106,8 @@ if(defined($opt{'swap'})){
    my($first_dir, $second_dir);
    
    # get the -swap thingos
-   $first_dir = substr($opt{swap}, 0, 1);
-   $second_dir = substr($opt{swap}, 1, 1);
+   $first_dir = substr($opt{'swap'}, 0, 1);
+   $second_dir = substr($opt{'swap'}, 1, 1);
    
    # mashing time
    open(HDR, "mincheader $infile |");
@@ -186,6 +198,60 @@ if(defined($opt{'stepscale'})){
    &do_cmd('minc_modify_header', '-dinsert', "zspace:start=$zstart", $outfile);
    }
 
+# reset direction cosines
+if(defined($opt{'resetdircos'})){
+   print STDOUT "Resetting direction cosines\n";
+
+   # if nothing else done already
+   if(!-e $outfile){
+      &do_cmd('cp', $infile, $outfile);
+      }
+
+   # reset cosines
+   &do_cmd('minc_modify_header', '-dinsert', "xspace:direction_cosines=1,0,0", $outfile);
+   &do_cmd('minc_modify_header', '-dinsert', "yspace:direction_cosines=0,1,0", $outfile);
+   &do_cmd('minc_modify_header', '-dinsert', "zspace:direction_cosines=0,0,1", $outfile);
+   }
+
+# slice and dice
+if(defined($opt{'salami'})){
+   my($offset, $step, $direction, $i, $dimlength, $dimstart, $dimstep);
+   my($cstart, $cstep, @cfiles);
+   
+   # parameter extraction
+   ($offset, $step, $direction) = $opt{'salami'} =~ m/(\d+)\+(\d+)([a-z])/;
+   
+   print STDOUT "Salami, $offset + $step in $direction\n" if $opt{'verbose'};
+
+   # get existing start and step
+   chomp($dimlength = `mincinfo -dimlength ${direction}space $infile`);
+   chomp($dimstart = `mincinfo -attvalue ${direction}space:start $infile`);
+   chomp($dimstep = `mincinfo -attvalue ${direction}space:step $infile`);
+
+   # calculate new step and start
+   $cstep = $dimstep * $step;
+   $cstart = $dimstart + ($offset * $dimstep);
+
+   print STDOUT "Getting slices [$offset+$step$direction]: ";
+   @cfiles = ();
+   for($i=$offset; $i < $dimlength; $i += $step){
+      print STDOUT "$i ";
+      &do_cmd("mincreshape", "-quiet",
+         "-dimrange", "${direction}space=$i,0",
+         $infile, "$tmpdir/$i.mnc");
+      
+      push(@cfiles, "$tmpdir/$i.mnc");
+      }
+   print STDOUT "\n";
+   
+   print STDOUT "Concat ";
+   &do_cmd("mincconcat", "-clobber",
+      "-concat_dimension", "${direction}space",
+      "-step", $cstep, "-start", $cstart,
+      @cfiles, $outfile);
+   }
+
+
 # add the history string to the output file
 &do_cmd('minc_modify_header',
    '-sappend', ":history='$history'",
@@ -193,8 +259,8 @@ if(defined($opt{'stepscale'})){
 
 
 sub do_cmd { 
-   print STDOUT "@_\n" if $opt{verbose};
-   if(!$opt{fake}){
+   print STDOUT "@_\n" if $opt{'verbose'};
+   if(!$opt{'fake'}){
       system(@_) == 0 or die;
       }
    }

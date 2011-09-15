@@ -29,6 +29,7 @@ $me = &basename($0);
    'swap' => undef,
    'stepscale' => undef,
    'salami' => undef,
+   'sandwich' => undef,
    );
 
 $Help = <<HELP;
@@ -79,6 +80,14 @@ $Usage = "Usage: $me [options] <infile.mnc> <outfile.mnc>\n".
       "[offset: number of slices to skip first] ".
       "[step: number of slices to skip between slices] ".
       "[dimension: dimension in which to slice] ".
+      "eg: 5+2z = every 2nd slice in z starting with the 5th slice"],
+      
+   ["-sandwich", "string", 1, \$opt{'sandwich'},
+      "insert blank slices between slices in a volume " .
+      "syntax: <offset>+<insert><dimension> " .
+      "[offset: number of slices to skip first] ".
+      "[insert: number of slices to insert between slices] ".
+      "[dimension: dimension in which to insert] ".
       "eg: 5+2z = every 2nd slice in z starting with the 5th slice"],
    );
    
@@ -213,7 +222,7 @@ if(defined($opt{'resetdircos'})){
    &do_cmd('minc_modify_header', '-dinsert', "zspace:direction_cosines=0,0,1", $outfile);
    }
 
-# slice and dice
+# salami
 if(defined($opt{'salami'})){
    my($offset, $step, $direction, $i, $dimlength, $dimstart, $dimstep);
    my($cstart, $cstep, @cfiles);
@@ -250,7 +259,56 @@ if(defined($opt{'salami'})){
       "-step", $cstep, "-start", $cstart,
       @cfiles, $outfile);
    }
+   
+# sandwich
+if(defined($opt{'sandwich'})){
+   my($offset, $insert, $direction, $i, $j, $dimlength, $dimstart, $dimstep);
+   my($cstart, $cstep, @cfiles);
+   
+   # parameter extraction
+   ($offset, $insert, $direction) = $opt{'sandwich'} =~ m/(\d+)\+(\d+)([a-z])/;
+   
+   print STDOUT "Sandwich, $offset + $insert in $direction\n" if $opt{'verbose'};
 
+   # get existing start and step
+   chomp($dimlength = `mincinfo -dimlength ${direction}space $infile`);
+   chomp($dimstart = `mincinfo -attvalue ${direction}space:start $infile`);
+   chomp($dimstep = `mincinfo -attvalue ${direction}space:step $infile`);
+
+   # calculate new start
+   $cstep = $dimstep * 1;
+   $cstart = $dimstart + ($offset * $dimstep);
+   
+   # make blank slice
+   &do_cmd("mincreshape",
+      "-dimrange", "${direction}space=-1,0",
+      $infile, "$tmpdir/blank.mnc");
+   
+   print STDOUT "Getting slices [$offset+$insert$direction]: ";
+   @cfiles = ();
+   for($i=$offset; $i < $dimlength; $i++){
+      print STDOUT "[$i/$dimlength] ";
+      &do_cmd("mincreshape", "-quiet",
+         "-dimrange", "${direction}space=$i,0",
+         $infile, "$tmpdir/$i.mnc");
+      
+      push(@cfiles, "$tmpdir/$i.mnc");
+
+      # add blank slices (except last)
+      if($i != $dimlength - 1){
+         for($j=0; $j<$insert; $j++){
+            push(@cfiles, "$tmpdir/blank.mnc");
+            }
+         }
+      }
+   print STDOUT "\n";
+   
+   print STDOUT "Concat ";
+   &do_cmd("mincconcat", "-clobber",
+      "-concat_dimension", "${direction}space",
+      "-step", $cstep, "-start", $cstart,
+      @cfiles, $outfile);
+   }
 
 # add the history string to the output file
 &do_cmd('minc_modify_header',

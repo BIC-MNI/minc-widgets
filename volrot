@@ -34,7 +34,7 @@ $tmpdir = "/tmp/$me-$$";
 $Help = <<HELP;
  | $me rotates a MINC volume about the centre of the volume
  |
- | Problems or comments should be sent to: rotor\@cmr.uq.edu.au
+ | Problems or comments should be sent to: a.janke\@gmail.com
 HELP
 
 $Usage = "\nUsage: $me [options] <in.mnc> <out.mnc>\n".

@@ -52,7 +52,7 @@ $me = &basename($0);
    'c|clobber' => \$opt{'clobber'},
    'version' => sub { &print_version_info },
    'f|fake' => \$opt{'fake'},
-   't|tmpdir' => \$opt{'tmpdir'},
+   't|tmpdir=s' => \$opt{'tmpdir'},
    
    'byte' => sub { $opt{'output_type'} = '-byte' },
    'short' => sub { $opt{'output_type'} = '-short' },
@@ -95,13 +95,11 @@ if(defined($opt{'sdfile'}) && -e $opt{'sdfile'} && !$opt{'clobber'}){
 # make tmpdir
 if(defined($opt{'tmpdir'})){
    &do_cmd('mkdir', '-p', $opt{'tmpdir'});
-   $opt{tmpdir} = &tempdir("$me-XXXXXXXX", DIR => $opt{'tmpdir'}, CLEANUP => 1);
+   $opt{'tmpdir'} = &tempdir("$me-XXXXXXXX", TMPDIR => 1, DIR => $opt{'tmpdir'}, CLEANUP => 1);
    }
 else{
    $opt{'tmpdir'} = &tempdir("$me-XXXXXXXX", TMPDIR => 1, CLEANUP => 1);
    }
-
-#$opt{'tmpdir'} = "./tmp";
 
 # do the nasty
 my($i, $start, $stop, @avgfiles, $nfiles);

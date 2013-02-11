@@ -34,6 +34,7 @@ $me = &basename($0);
    'verbose' => 0,
    'clobber' => 0,
    'fake' => 0,
+   'tmpdir' => undef,
    'avgnum' => 20,
    'sdfile' => undef,
    'filelist' => undef,
@@ -51,6 +52,7 @@ $me = &basename($0);
    'c|clobber' => \$opt{'clobber'},
    'version' => sub { &print_version_info },
    'f|fake' => \$opt{'fake'},
+   't|tmpdir' => \$opt{'tmpdir'},
    
    'byte' => sub { $opt{'output_type'} = '-byte' },
    'short' => sub { $opt{'output_type'} = '-short' },
@@ -91,9 +93,15 @@ if(defined($opt{'sdfile'}) && -e $opt{'sdfile'} && !$opt{'clobber'}){
    }
 
 # make tmpdir
-#$opt{'tmpdir'} = &tempdir( "$me-XXXXXXXX", TMPDIR => 1, CLEANUP => 1 );
+if(defined($opt{'tmpdir'})){
+   &do_cmd('mkdir', '-p', $opt{'tmpdir'});
+   $opt{tmpdir} = &tempdir("$me-XXXXXXXX", DIR => $opt{'tmpdir'}, CLEANUP => 1);
+   }
+else{
+   $opt{'tmpdir'} = &tempdir("$me-XXXXXXXX", TMPDIR => 1, CLEANUP => 1);
+   }
 
-$opt{'tmpdir'} = "./tmp";
+#$opt{'tmpdir'} = "./tmp";
 
 # do the nasty
 my($i, $start, $stop, @avgfiles, $nfiles);
@@ -176,24 +184,26 @@ if($opt{'robust'}){
    foreach $i (@infiles){
       print STDOUT "[ROBUST] Doing $i";
       
+      my $bname = &basename($i);
+      
       &do_cmd('minccalc', '-clobber',
          '-max_buffer_size_in_kb', 4096000,
          '-expression', '(abs(A[2]) < 0.001) ? 0 : abs((A[0] - A[1])/A[2])',
          $i, $iavg,  $opt{'sdfile'},
-         "$opt{'tmpdir'}/$i.z.mnc");
+         "$opt{'tmpdir'}/z.mnc");
       
       &do_cmd('minclookup', '-clobber',
          '-range', 1.0, 1.2,
          '-lut_string', '0 1; 1 0',
-         "$opt{'tmpdir'}/$i.z.mnc", "$opt{'tmpdir'}/$i.m.mnc");
+         "$opt{'tmpdir'}/z.mnc", "$opt{'tmpdir'}/$bname.m.mnc");
       
       &do_cmd('mincmath', '-clobber',
          '-max_buffer_size_in_kb', 4096000,
-         '-mult', $i, "$opt{'tmpdir'}/$i.m.mnc",
-         "$opt{'tmpdir'}/$i.t.mnc");
+         '-mult', $i, "$opt{'tmpdir'}/$bname.m.mnc",
+         "$opt{'tmpdir'}/$bname.t.mnc");
         
-      push(@numer_files, "$opt{'tmpdir'}/$i.t.mnc");
-      push(@denom_files, "$opt{'tmpdir'}/$i.m.mnc");
+      push(@numer_files, "$opt{'tmpdir'}/$bname.t.mnc");
+      push(@denom_files, "$opt{'tmpdir'}/$bname.m.mnc");
       }
 
    &do_cmd('mincmath', '-clobber',
@@ -295,6 +305,11 @@ Dump a man page
          
 Don't run anything, just echo the commands that would have been run
 
+=item B<-t>, B<--tmpdir>
+         
+Define a tmpdir, should be used with --robust as vast amount of data will
+be produced for a large number of input files
+
 =item B<--sdfile> 
 
 Place standard deviation image in specified file
@@ -311,6 +326,7 @@ Input file with the files to be averaged one per line
 
 Perform robust averaging, features that are outside 1 standard deviation
 from the mean are downweighted. Works well for noisy data with artifacts.
+see the --tmpdir option if you have a large number of input files.
         
 =back
         

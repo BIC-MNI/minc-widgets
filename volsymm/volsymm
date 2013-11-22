@@ -1,0 +1,221 @@
+#! /usr/bin/env perl
+#
+# Andrew Janke - a.janke@gmail.com
+#
+# Copyright Andrew Janke, Australian National University.
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies.
+#
+# The author and the University make no representations about the
+# suitability of this software for any purpose.  It is provided "as is"
+# without express or implied warranty.
+
+
+use strict;
+use warnings "all";
+use Getopt::Tabular;
+use File::Basename;
+use File::Temp qw/ tempdir /;
+
+# until I get organised and do this properly
+my $PACKAGE = &basename($0);
+my $VERSION = '1.2.0';
+my $PACKAGE_BUGREPORT = '"Andrew Janke" <a.janke@gmail.com>';
+
+my($Help, $Usage, $me);
+my(@opt_table, %opt, $infile, $outxfm, $outfile, @args, $tmpdir);
+
+$me = &basename($0);
+%opt = (
+   'verbose'   => 0,
+   'clobber'   => 0,
+   'fake' => 0,
+   'nofit' => 0,
+   'linear' => 0,
+   'nonlinear' => 0,
+   'config_file' => undef,
+   'direction' => 'x',
+   'resample_options' => undef,
+   );
+
+$Help = <<HELP;
+| $me makes a volume symmetric about an axis either linearly
+|    and/or nonlinearly
+| 
+| This is done by registering a volume to a flipped image of
+|    itself.
+|
+| The -nofit option is designed so that you can use an existing
+|    symmetric transformation on another file
+|
+| Problems or comments should be sent to: a.janke\@gmail.com
+HELP
+
+$Usage = "Usage: $me [options] <infile.mnc> <trans.xfm> [<outfile.mnc>]\n".
+         "       $me -help to list options\n\n";
+
+@opt_table = (
+   ["General Options", "section" ],
+   ["-version", "call", 0, \&print_version_info,
+      "print version and exit" ],
+   ["-verbose", "boolean", 0, \$opt{'verbose'},
+      "be verbose" ],
+   ["-clobber", "boolean", 0, \$opt{'clobber'},
+      "clobber existing files" ],
+   ["-fake", "boolean", 0, \$opt{'fake'},
+      "do a dry run, (echo cmds only)" ],
+   
+   
+   ["-x", "const", 'x', \$opt{'direction'},
+      "flip volume in x-plane (default)" ],
+   ["-y", "const", 'y', \$opt{'direction'},
+      "flip volume in y-plane" ],
+   ["-z", "const", 'z', \$opt{'direction'},
+      "flip volume in z-plane" ],
+   
+   ["Fitting Options", "section" ],
+   ["-nofit", "boolean", 0, \$opt{'nofit'},
+      "use the input transformation instead of generating one" ],
+   ["-linear", "boolean", 0, \$opt{'linear'},
+      "fit using a linear xfm" ],
+   ["-nonlinear", "boolean", 0, \$opt{'nonlinear'},
+      "fit using a non-linear xfm" ],
+   ["-config_file", "string", 1, \$opt{'config_file'},
+      "file containing the fitting configuration (nlpfit -help for info)",
+      "<fit.conf>" ],
+   
+   ["Resampling Options", "section" ],
+   ["-resample_options", "string", 1, \$opt{'resample_options'},
+      "options to pass to mincresample. Typically -nearest_neighbour for label volumes.",
+      "" ],
+   );
+
+# check args
+&Getopt::Tabular::SetHelp($Help, $Usage);
+&GetOptions(\@opt_table, \@ARGV) || exit 1;
+die $Usage if($#ARGV <= 1);
+$infile = shift(@ARGV);
+$outxfm = shift(@ARGV);
+$outfile = (defined($ARGV[0])) ? shift(@ARGV) : undef;
+
+# check for files
+die "\n$me: Couldn't find input file: $infile\n\n" if (!-e $infile);
+if(-e $outfile && !$opt{'clobber'}){
+   die "\n$me: $outfile exists, use -clobber to overwrite\n\n";
+   }
+
+# make tmpdir
+$tmpdir = &tempdir( "$me-XXXXXXXX", TMPDIR => 1, CLEANUP => 1 );
+
+
+# create the transform if required
+if($opt{'nofit'}){
+   
+   # check that the xfm exists
+   die "\n$me: Couldn't find input xfm: $outxfm\n\n" if (!-e $outxfm);
+   
+   print STDOUT "+++ skipping xfm generation (-nofit) +++\n";
+   }
+
+else{
+   
+   if(-e $outxfm && !$opt{'clobber'}){
+      die "\n$me: $outxfm exists, use -clobber to overwrite\n\n";
+      }
+   
+   # check fit args
+   if(!$opt{'linear'} && !$opt{'nonlinear'}){
+      warn "$me: neither -linear of -nonlinear specified, doing a linear fit\n\n";
+      $opt{linear} = 1;
+      }
+   die "\n$me: Couldn't find config file: $opt{'config_file'}\n\n" 
+      if (defined($opt{'config_file'}) && !-e $opt{'config_file'});
+   
+   # generate the flipped version
+   print STDOUT "+++ generate flipped version +++\n";
+   &do_cmd('volflip', '-clobber', "-$opt{'direction'}", $infile, "$tmpdir/flipped.mnc");
+   
+   # generate an identity transform
+   my $identxfm = "$tmpdir/ident-lin.xfm";
+   &do_cmd('param2xfm', $identxfm);
+   
+   
+   # first lin reg if required
+   my $linxfm = "$tmpdir/lin.xfm";
+   if($opt{'linear'}){
+      print STDOUT "+++ [LIN] xfm to self +++\n";
+      &do_cmd('bestlinreg', '-clobber',
+              $infile, "$tmpdir/flipped.mnc",
+              "$tmpdir/FWD-lin.xfm");
+      
+      # take 1/2 the xfm
+      &do_cmd('xfmavg', '-clobber',
+              "$tmpdir/FWD-lin.xfm", $identxfm,
+              $linxfm);
+      }
+   else{
+      $linxfm = $identxfm;
+      }
+   
+   
+   # then non-lin reg if required
+   my $nlinxfm = "$tmpdir/nlin.xfm";
+   my $nlingrid = "$tmpdir/nlin_grid_0.mnc";
+   if($opt{'nonlinear'}){
+      print STDOUT "+++ [NLIN] xfm to self +++\n";
+      &do_cmd('nlpfit', '-clobber',
+              '-extend', 10,
+              (($opt{'config_file'}) ? ('-config', $opt{'config_file'}) : ()),
+              '-init_xfm', $linxfm,
+              $infile, "$tmpdir/flipped.mnc",
+              $nlinxfm);
+         
+      # take half the xfm
+      &do_cmd('mincmath', '-clobber',
+              '-mult', '-const', 0.5,
+              $nlingrid, "$nlingrid.half");
+      &do_cmd('mv', "$nlingrid.half", $nlingrid);
+      }
+   else{
+      $nlinxfm = $identxfm;
+      }
+   
+   # copy to output xfm
+   &do_cmd('xfmconcat', '-clobber', $linxfm, $nlinxfm, $outxfm);
+   }
+
+
+# resample if required
+if(defined($outfile)){
+   # apply and average with self
+   &do_cmd('mincresample', '-clobber',
+           ((defined($opt{'resample_options'})) ? split(/\ /, $opt{'resample_options'}) : ()),
+           '-use_input_sampling',
+           '-transformation', $outxfm,
+           $infile, "$tmpdir/FWD-rsmpl.mnc");
+
+   &do_cmd('volflip', '-clobber',
+           "-$opt{'direction'}",
+           "$tmpdir/FWD-rsmpl.mnc",
+           "$tmpdir/FWD-rsmpl.flip.mnc");
+
+   &do_cmd('mincaverage', '-clobber',
+           "$tmpdir/FWD-rsmpl.mnc",
+           "$tmpdir/FWD-rsmpl.flip.mnc",
+           $outfile);
+   }
+
+
+sub do_cmd { 
+   print STDOUT "@_\n" if $opt{'verbose'};
+   if(!$opt{'fake'}){
+      system(@_) == 0 or die;
+      }
+   }
+
+sub print_version_info {
+   print STDOUT "\n$PACKAGE version $VERSION\n".
+                "Comments to $PACKAGE_BUGREPORT\n\n";
+   exit;
+   }

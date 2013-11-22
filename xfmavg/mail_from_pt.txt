@@ -1,0 +1,47 @@
+From lynnt@ucla.edu Fri Mar 29 20:07:55 2002
+Date: Fri, 29 Mar 2002 14:02:20 -0800
+From: Paul Thompson <lynnt@ucla.edu>
+To: Andrew JANKE <rotor@bic.mni.mcgill.ca>
+Cc: thompson@loni.ucla.edu
+Subject: Lie groups and affine matrices!
+
+Hi Andrew
+
+Aha yes I might be able to help on this. Or create confusion!
+
+Affine transforms form a Lie group so averaging etc. can be defined so 
+that the group is closed under averaging and the results make sense, 
+i.e. the average of N affine XFMs is another one. The way it is usually 
+done is with matrix logarithms. There are functions knocking around to 
+do matrix logs and matrix exponentiation, Matlab has it I think, and 
+this is what we did to set the scales of our little elastic AD template. 
+It has to do with the log matrix group being a flat manifold, so you can 
+add and take averages in it and then project results back into the 
+affine matrices (which are an annoying curved hypersurface in R^12) 
+using matrix exponentiation.
+
+Suppose you have N XFMs t1, t2, ... tn, and mlog and mexp are functions, 
+then:
+
+average(t1,..,tn)=mexp[ [mlog(t1) + .. + mlog(tn)] / n ]
+
+This is a neat way to do it. Also there is an easier way to do this if 
+the eigenvectors are the same for all ti (this won't happen with brains 
+but it kind of helps understand why it works). If they are not, you can 
+apply the nth root of each matrix one at a time, which you can find from 
+the eigenvector and multiplying them by the nth root of the eigenvalues. 
+But a way of not having to factorize each matrix is to do mlog etc. and 
+it is easy-ish.
+
+I hope this helps! - Paul
+
+Paul Thompson, Ph.D.
+Assistant Professor of Neurology
+Laboratory of Neuro Imaging and Brain Mapping Division
+UCLA School of Medicine
+4238 Reed Neurology
+710 Westwood Plaza
+Los Angeles, CA 90095-1769
+thompson@loni.ucla.edu
+http://www.loni.ucla.edu/~thompson/thompson.html
+http://www.loni.ucla.edu/~thompson/thompson_pubs.html

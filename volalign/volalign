@@ -1,0 +1,189 @@
+#! /usr/bin/env perl
+#
+# Andrew Janke - a.janke@gmail.com
+# Center for Magnetic Resonance
+# The University of Queensland
+#
+# Copyright Andrew Janke, The University of Queensland.
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies.  The
+# author and the University of Queensland make no representations about the
+# suitability of this software for any purpose.  It is provided "as is"
+# without express or implied warranty.
+
+$| = 1;
+
+use strict;
+use warnings "all";
+use Getopt::Tabular;
+use File::Basename;
+use File::Temp qw/ tempdir /;
+
+my($Help, $Usage, $me, @opt_table, %opt);
+my($tmpdir, $infile, $outxfm, $outfile);
+
+$me = &basename($0);
+%opt = (
+   'verbose' => 0,
+   'quiet' => 0,
+   'clobber' => 0,
+   'fake' => 0,
+   'method' => 'minctracc',
+   'align_center' => 'voxel',
+   );
+
+$Help = <<HELP;
+| $me is designed to align MINC file about its axis of symmetry.
+|    (currently the Y-Z plane -- this currently cant be changed)
+| This is done via registering an image to a flipped version of 
+| itself and halving the resulting xfm.
+| 
+| Problems or comments should be sent to: a.janke\@gmail.com
+HELP
+
+$Usage = "Usage: $me [options] <infile.mnc> <align.xfm> [<outfile.mnc>]\n".
+         "       $me -help to list options\n\n";
+@opt_table = (
+   ["-verbose", "boolean", 0, \$opt{verbose},
+      "be verbose" ],
+   ["-quiet", "boolean", 0, \$opt{quiet},
+        "be vewwy quiet (wabbits probably)" ],
+   ["-clobber", "boolean", 0, \$opt{clobber},
+      "clobber existing files" ],
+   ["-fake", "boolean", 0, \$opt{fake},
+      "do a dry run, (echo cmds only)" ],
+      
+   ["Registration options", "section" ],
+   ["-minctracc",  "const", 'minctracc', \$opt{method},  
+      "Use minctracc [default]" ],
+   ["-mritoself",  "const", 'mritoself', \$opt{method},  
+      "Use mritoself" ],
+   ["-voxel",  "const", 'voxel', \$opt{align_center},  
+      "Align about the center voxel of the volume [default]" ],
+   ["-world",  "const", 'world', \$opt{align_center},  
+      "Align about world co-ordinate 0,0,0" ],
+   );
+
+# check args
+&Getopt::Tabular::SetHelp($Help, $Usage);
+&GetOptions(\@opt_table, \@ARGV) || exit 1;
+die $Usage if ($#ARGV < 1);
+
+# make tmpdir
+$tmpdir = &tempdir( "$me-XXXXXXXX", TMPDIR => 1, CLEANUP => 1 );
+
+# get file names
+$infile = shift(@ARGV);
+$outxfm = shift(@ARGV);
+$outfile = ($#ARGV > -1) ? shift(@ARGV) : undef;
+
+# check for files
+if(!-e $infile){
+   die "$me: Couldn't find input file: $infile\n\n";
+   }
+if(-e $outxfm && !$opt{clobber}){
+   die "$me: $outxfm exists, -clobber to overwrite\n\n";
+   }
+if(defined $outfile && -e $outfile && !$opt{clobber}){
+   die "$me: $outfile exists, -clobber to overwrite\n\n";
+   }
+
+# figure out the symmetry center
+my(@center);
+if($opt{align_center} eq 'world'){
+   @center = (0,0,0);
+   }
+elsif($opt{align_center} eq 'voxel'){
+   my($buf, $tmp, @dimnames, @sizes);
+   
+   # get dimnames
+   chomp($buf = `mincinfo -dimnames $infile`);
+   @dimnames = split(/\ /, $buf);
+   
+   # get 1/2 sizes
+   foreach (@dimnames){
+      chomp($tmp = `mincinfo -dimlength $_ $infile`);
+      $tmp /= 2;
+      push(@sizes, $tmp);
+      }
+   
+   $tmp = join(' ', @sizes);
+   chomp($buf = `voxeltoworld $infile $tmp`);
+   @center = split(' ', $buf);
+   }
+else{
+   die "$me: This shouldn't happen, something if broken\n\n";
+   }
+   
+
+# a bit of output
+if(!$opt{quiet}){
+   print STDOUT " | infile:  $infile\n";
+   print STDOUT " | xfm:     $outxfm\n";
+   print STDOUT " | outfile: $outfile\n" if defined($outfile);
+   print STDOUT " | center: [" . join('|', @center) . "]\n" if defined($outfile);
+   }
+
+# make the inversion transform
+&do_cmd('param2xfm', '-clobber', 
+        '-center', @center,
+        '-scales' ,-1, 1, 1,
+        "$tmpdir/inv.xfm");
+
+# invert the input file
+&do_cmd('mincresample', '-clobber',
+        '-use_input_sampling',
+        '-transformation', "$tmpdir/inv.xfm",
+        $infile, "$tmpdir/inv.mnc");
+
+# create a registration xfm file
+&do_cmd($opt{method}, '-clobber',
+        '-xcorr', '-lsq6',
+        (($opt{method} eq 'minctracc') ? '-est_center' : ()),
+        $infile, "$tmpdir/inv.mnc",
+        "$tmpdir/reg.xfm");
+
+# get info from the registration transform
+my(@trans, @rotns, $c);
+foreach (`xfm2param $tmpdir/reg.xfm`){
+   if    (m/\-translation/){ (undef, @trans) = split; }
+   elsif (m/\-rotation/)   { (undef, @rotns) = split; }
+   }
+
+# divide through by 2 to get half the transform
+for($c=0; $c<3; $c++){ 
+   $trans[$c] /= 2;
+   $rotns[$c] /= 2;
+   }
+
+if(!$opt{quiet}){
+   print STDOUT "| Translations are: @trans\n";
+   print STDOUT "| Rotations are:    @rotns\n";
+   }
+
+
+# Make the 1/2 xfm
+&do_cmd('param2xfm', '-clobber',
+        '-center', @center,
+        '-translation', @trans,
+        '-rotations', @rotns,
+        $outxfm);
+
+# create the resampled file if required
+if(defined $outfile){
+   print STDOUT "Creating $outfile...\n" if !$opt{quiet};
+   &do_cmd('mincresample', '-clobber',
+           '-use_input_sampling',
+           '-transformation', $outxfm,
+           $infile, $outfile);
+   }
+
+
+
+sub do_cmd {
+   print STDOUT "@_\n" if $opt{verbose};
+   if(!$opt{fake}){
+      system(@_) == 0 or die;
+      }
+   }

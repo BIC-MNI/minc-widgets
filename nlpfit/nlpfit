@@ -1,0 +1,412 @@
+#! /usr/bin/env perl
+#
+# hierarchial non-linear fitting with bluring
+#
+# Andrew Janke - a.janke@gmail.com
+#
+# Copyright Andrew Janke, The Australian National University.
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies.  The
+# author and the University make no representations about the
+# suitability of this software for any purpose.  It is provided "as is"
+# without express or implied warranty.
+
+
+use strict;
+use warnings "all";
+use Getopt::Tabular;
+use File::Basename;
+use File::Temp qw/ tempdir /;
+
+# until I get organised and do this properly
+my $PACKAGE = &basename($0);
+my $VERSION = '1.2.0';
+my $PACKAGE_BUGREPORT = '"Andrew Janke" <a.janke@gmail.com>';
+
+# default minctracc parameters as optimised by Steve Robbins
+# in his PhD thesis (McGill)
+my @def_minctracc_args = (
+#   '-debug',
+   '-clobber',
+   '-nonlinear', 'corrcoeff',
+   '-weight', 1,
+   '-stiffness', 1,
+   '-similarity', 0.3,
+   '-sub_lattice', 6,
+   );
+
+my @default_conf = (
+   {'step'         => 16,
+    'blur_fwhm'    => 8,
+    'iterations'   => 3,
+    },
+
+   {'step'         => 8,
+    'blur_fwhm'    => 4,
+    'iterations'   => 2,
+    },
+
+   {'step'         => 4,
+    'blur_fwhm'    => 4,
+    'iterations'   => 2,
+    },
+   );
+
+my($Help, $Usage, $me);
+my(@opt_table, %opt, $orig_source, $orig_target, $source, $target, $outxfm, $outfile, @args);
+
+$me = &basename($0);
+%opt = (
+   'verbose' => 0,
+   'clobber' => 0,
+   'fake' => 0,
+   'tmpdir' => undef,
+   'keeptmp' => 0,
+   'symmetric' => 0,
+   'extend' => undef,
+   'init_ident' => undef,
+   'init_xfm' => undef,
+   'init_gen' => undef,
+   'init_xfm' => undef,
+   'source_mask' => undef,
+   'target_mask' => undef,
+   'config_file' => undef,
+   );
+
+$Help = <<HELP;
+| $me does hierachial non-linear fitting between two files
+|    The default fitting involves a 16mm, 8mm and 4mm fit
+|    this can bemodified via the -config argument
+|
+| The config file format is perl syntax that can be sourced
+|    the following is an example that will do a 16mm and
+|    then a 8mm fit with 3 and 2 iterations respectively.
+|    The blur_fwhm parameter defines the blurring that is
+|    used in the particular step, set this to 0 to skip
+|    the blurring for this step
+|
+| To add additional step, you just need to add another stanza
+|    to the \@conf array;
+|
+| # example configuration file (fit.conf) for nlpfit
+| \@conf = (
+|    {'step'         => 16,
+|     'blur_fwhm'    => 8,
+|     'iterations'   => 3,
+|     },
+|
+|    {'step'         => 8,
+|     'blur_fwhm'    => 4,
+|     'iterations'   => 2,
+|     },
+|
+|    {'step'         => 4,
+|     'blur_fwhm'    => 4,
+|     'iterations'   => 2,
+|     },
+|   );
+| 
+|
+| Problems or comments should be sent to: a.janke\@gmail.com
+HELP
+
+$Usage = "Usage: $me [options] source.mnc target.mnc output.xfm [output.mnc]\n".
+         "       $me -config_file fit.conf source.mnc target.mnc output.xfm\n".
+         "       $me -help to list options\n\n";
+
+@opt_table = (
+   ["General Options", "section" ],
+   ["-version", "call", 0, \&print_version_info,
+      "print version and exit" ],
+   ["-verbose", "boolean", 0, \$opt{verbose},
+      "be verbose" ],
+   ["-clobber", "boolean", 0, \$opt{clobber},
+      "clobber existing check files" ],
+   ["-fake", "boolean", 0, \$opt{fake},
+      "do a dry run, (echo cmds only)" ],
+   ["-tmpdir", "string", 1, \$opt{tmpdir},
+      "temporary directory to use" ],
+   ["-keeptmp", "boolean", 1, \$opt{keeptmp},
+      "keep the tmpdir after processing (dont delete)" ],
+   ["-config_file", "string", 1, \$opt{config_file},
+      "file containing the fitting configuration use -help for format",
+      "<fit.conf>" ],
+      
+   ["Initial transformation", "section" ],
+   ["-identity", "boolean", 1, \$opt{init_xfm},
+      "use an identity transformation as starting point (default)",
+      "<fname.xfm>" ],
+   ["-init_xfm", "string", 1, \$opt{init_xfm},
+      "initial transformation (default identity)",
+      "<fname.xfm>" ],
+   ["-init_gen", "string", 1, \$opt{init_gen},
+      "generate an initial transformation using bestlinreg",
+      "<fname.xfm>" ],
+      
+   ["Fitting Options", "section" ],
+   ["-extend", "integer", 1, \$opt{extend},
+      "extend the volume by # slices before fitting to avoid edge effects",
+      "<integer>" ],
+   ["-symmetric", "boolean", 0, \$opt{symmetric},
+      "do a symmetric (L-R) registration" ],
+   ["-source_mask", "string", 1, \$opt{source_mask},
+      "source mask to use during fitting",
+      "<fname.mnc>" ],
+   ["-target_mask", "string", 1, \$opt{target_mask},
+      "target mask to use during fitting",
+      "<fname.mnc>" ],
+   );
+
+# Check and get arguments
+&Getopt::Tabular::SetHelp($Help, $Usage);
+&GetOptions (\@opt_table, \@ARGV) || exit 1;
+die $Usage if(! ($#ARGV == 2 || $#ARGV == 3));
+$source = shift(@ARGV);
+$target = shift(@ARGV);
+$outxfm = shift(@ARGV);
+$outfile = (defined($ARGV[0])) ? shift(@ARGV) : undef;
+$orig_source = $source;
+$orig_target = $target;
+
+# check for files
+die "$me: Couldn't find input file: $source\n\n" if (!-e $source);
+die "$me: Couldn't find input file: $target\n\n" if (!-e $target);
+if(-e $outxfm && !$opt{clobber}){
+   die "$me: $outxfm exists, -clobber to overwrite\n\n";
+   }
+if(defined($outfile) && -e $outfile && !$opt{clobber}){
+   die "$me: $outfile exists, -clobber to overwrite\n\n";
+   }
+
+# make tmpdir
+if(defined($opt{tmpdir})){
+   # just in case
+   &do_cmd('mkdir', '-p', $opt{tmpdir});
+   $opt{tmpdir} = &tempdir( "$me-XXXXXXXX", DIR => $opt{tmpdir}, CLEANUP => (($opt{'keeptmp'}) ? 0 : 1) );
+   }
+else{
+   $opt{tmpdir} = &tempdir( "$me-XXXXXXXX", TMPDIR => 1, CLEANUP => (($opt{'keeptmp'}) ? 0 : 1) );
+   }
+
+# set up filename base
+my($i, $type, $s_base, $t_base, $stage_xfm, $stage_source, $stage_target, $flip_prev_xfm, $prev_xfm);
+$s_base = &basename($source);
+$s_base =~ s/\.mnc$//;
+$t_base = &basename($target);
+$t_base =~ s/\.mnc$//;
+
+# check if input files are of datatype short
+chomp($type = `mincinfo -vartype image $source`);
+if($type ne 'short'){
+   warn "$me: $source is not of type short, converting\n";
+   &do_cmd('mincreshape', '-clobber', 
+           '-short',
+           $source, "$opt{tmpdir}/$s_base.short.mnc");
+   $source = "$opt{tmpdir}/$s_base.short.mnc";
+   }
+
+chomp($type = `mincinfo -vartype image $target`);
+if($type ne 'short'){
+   warn "$me: $target is not of type short, converting\n";
+   &do_cmd('mincreshape', '-clobber', 
+           '-short',
+           $target, "$opt{tmpdir}/$t_base.short.mnc");
+   $target = "$opt{tmpdir}/$t_base.short.mnc";
+   }
+
+# set the inital xfm to identity (if not defined) 
+if(!defined $opt{init_xfm}){
+    $opt{init_xfm} = "$opt{tmpdir}/identity.xfm";
+    &do_cmd('param2xfm', '-clobber', $opt{init_xfm});
+    }
+
+
+
+
+# set up the @conf array
+my(@conf);
+if(defined($opt{config_file})){
+   
+   my($buf);
+   $buf = `cat $opt{config_file}`;
+   
+   # slurp
+   if (eval($buf)){
+      print STDOUT "$me: Read config from $opt{config_file}\n" if $opt{verbose};
+      }
+   else{
+      die "$me: Error reading config from $opt{config_file} (fix it!)\n\n";
+      }
+   }
+else{
+   @conf = @default_conf;
+   }
+
+
+# extend if we have to except the neck (-z)
+if(defined($opt{extend})){
+   my $source_ext = "$opt{tmpdir}/$s_base.ext.mnc";
+   my $target_ext = "$opt{tmpdir}/$t_base.ext.mnc";
+   
+   &do_cmd('autocrop', '-clobber',
+           '-extend', 
+           "$opt{extend}v,$opt{extend}v",
+           "$opt{extend}v,$opt{extend}v",
+           "0v,$opt{extend}v",
+           $source, $source_ext);
+   &do_cmd('autocrop', '-clobber',
+           '-extend', 
+           "$opt{extend}v,$opt{extend}v",
+           "$opt{extend}v,$opt{extend}v",
+           "0v,$opt{extend}v",
+           $target, $target_ext);
+   
+   $source = $source_ext;
+   $target = $target_ext;
+   }
+
+
+# a fitting we shall go...
+for ($i=0; $i<=$#conf; $i++){
+   
+   # set up registration parameters
+   $stage_source = "$opt{tmpdir}/$s_base.$conf[$i]{blur_fwhm}";
+   $stage_target = "$opt{tmpdir}/$t_base.$conf[$i]{blur_fwhm}";
+   $stage_xfm = ($i == $#conf) ? $outxfm : "$opt{tmpdir}/$s_base.$conf[$i]{blur_fwhm}.xfm";
+   
+   print STDOUT "-+-[$i]\n".
+                " | step:           $conf[$i]{step}\n".
+                " | blur_fwhm:      $conf[$i]{blur_fwhm}\n".
+                " | iterations:     $conf[$i]{iterations}\n".
+                " | source:         $stage_source\n".
+                " | target:         $stage_target\n".
+                " | xfm:            $stage_xfm\n".
+                "\n";
+   
+   # blur the source and target files if required
+   if($conf[$i]{blur_fwhm} != 0){
+      if(!-e "$stage_source\_blur.mnc"){
+         &do_cmd('mincblur', '-no_apodize', '-fwhm', $conf[$i]{blur_fwhm}, $source, $stage_source);
+         }
+      if(!-e "$stage_target\_blur.mnc"){
+         &do_cmd('mincblur', '-no_apodize', '-fwhm', $conf[$i]{blur_fwhm}, $target, $stage_target);
+         }
+      }
+   else{
+      # set up links
+      if(!-e "$stage_source\_blur.mnc"){
+         &do_cmd('cp', '-f', $source, "$stage_source\_blur.mnc");
+         }
+      if(!-e "$stage_target\_blur.mnc"){
+         &do_cmd('cp', '-f', $target, "$stage_target\_blur.mnc");
+         }
+      }
+   
+   # set up registration
+   @args = ('minctracc',  @def_minctracc_args,
+            '-iterations', $conf[$i]{iterations},
+            '-step', $conf[$i]{step}, $conf[$i]{step}, $conf[$i]{step},
+            '-lattice_diam', $conf[$i]{step} * 3, 
+                             $conf[$i]{step} * 3, 
+                             $conf[$i]{step} * 3);
+   
+   # no super sampling if number of nodes is above 100 (in any direction)
+   (my @sizes) = split(/\n/,
+      `mincinfo -dimlength xspace -dimlength yspace -dimlength zspace $stage_source\_blur.mnc`);
+   
+   print STDOUT "SIZES: @sizes - $stage_source\_blur.mnc\n" if $opt{'verbose'};
+   if($sizes[0]/$conf[$i]{step} > 100 ||
+      $sizes[1]/$conf[$i]{step} > 100 ||
+      $sizes[2]/$conf[$i]{step} > 100){
+      push(@args, '-no_super');
+      
+      print STDOUT "Adding -no_super\n" if $opt{'verbose'};
+      }
+   
+   # masks
+   push(@args, '-source_mask', $opt{source_mask}) if defined($opt{source_mask});
+   push(@args, '-model_mask', $opt{target_mask}) if defined($opt{target_mask});
+   
+   if($opt{symmetric}){
+      my($orig_xfm, $flip_xfm, $avg_xfm, $flip_source, $base_xfm, $flip_base_xfm);
+      
+      # file names
+      $flip_source = "$stage_source\_blur.flip.mnc";
+      $orig_xfm = "$opt{tmpdir}/$s_base.$conf[$i]{blur_fwhm}.orig.xfm";
+      $flip_xfm = "$opt{tmpdir}/$s_base.$conf[$i]{blur_fwhm}.flip.xfm";
+      
+      # if we are on the first iteration, flip the initial xfm
+      if($i == 0){
+         $base_xfm = $opt{init_xfm};
+         $flip_base_xfm = "$opt{tmpdir}/$s_base.base_flip.xfm";
+         
+         print STDOUT "On first iteration, creating flipped xfm\n";
+         &do_cmd('xfmflip', '-clobber', '-x', $base_xfm, $flip_base_xfm);
+         }
+      else{
+         $base_xfm = $prev_xfm;
+         $flip_base_xfm = $flip_prev_xfm;
+         }
+      
+      # flip the source file if required (depends on blurring level)
+      if(!-e $flip_source){
+         &do_cmd('volflip', '-clobber', '-x', "$stage_source\_blur.mnc", $flip_source);
+         }
+         
+      # do the original and flipped registrations
+      &do_cmd(@args, '-transformation', $base_xfm, 
+              "$stage_source\_blur.mnc", "$stage_target\_blur.mnc", $orig_xfm);
+      &do_cmd(@args, '-transformation', $flip_base_xfm, 
+              $flip_source, "$stage_target\_blur.mnc", $flip_xfm);
+      
+      $prev_xfm = $orig_xfm;
+      $flip_prev_xfm = $flip_xfm;
+      
+      # do the averaging if we are on the final stage
+      if($i == $#conf){
+         $avg_xfm = "$opt{tmpdir}/$s_base\_$conf[$i]{blur_fwhm}.avg.xfm";
+      
+         # flip the flipped registration
+         &do_cmd('xfmflip', '-clobber', '-x', $flip_xfm, "$flip_xfm.flip");
+      
+         # average with the original
+         &do_cmd('xfmavg', '-clobber', '-ignore_linear',
+            $orig_xfm, "$flip_xfm.flip", $avg_xfm);
+      
+         # then add the linear component back on
+         &do_cmd('xfmconcat', $opt{init_xfm}, $avg_xfm, $stage_xfm);
+         }
+      }
+   
+   # standard registration
+   else{
+      &do_cmd(@args, '-transformation', (($i == 0) ? $opt{init_xfm} : $prev_xfm),
+              "$stage_source\_blur.mnc", "$stage_target\_blur.mnc", $stage_xfm);
+      
+      $prev_xfm = $stage_xfm;
+      }
+   }
+
+# resample if required
+if(defined($outfile)){
+   print STDOUT "-+- creating $outfile using $outxfm\n".
+   &do_cmd('mincresample', '-clobber', 
+           '-like', $orig_target,
+           '-transformation', $outxfm,
+           $orig_source, $outfile);
+   }
+
+
+sub do_cmd { 
+   print STDOUT "@_\n" if $opt{verbose};
+   if(!$opt{fake}){
+      system(@_) == 0 or die;
+      }
+   }
+
+sub print_version_info {
+   print STDOUT "\n$PACKAGE version $VERSION\n".
+                "Comments to $PACKAGE_BUGREPORT\n\n";
+   exit;
+   }

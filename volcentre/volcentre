@@ -1,0 +1,153 @@
+#! /usr/bin/env perl
+#
+# Andrew Janke - a.janke@gmail.com
+# Guenther Grabner - ggrabner@gmx.at
+# http://a.janke.googlepages.com/
+#
+# Copyright 2006 Andrew Janke, Guenther Grabner
+#
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies.
+# The author makes no representations about the suitability of this 
+# software for any purpose.  It is provided "as is" without express 
+# or implied warranty.
+
+$| = 1;
+
+use strict;
+use warnings "all";
+use Getopt::Tabular;
+use File::Basename;
+
+# until I get organised and do this properly
+my $PACKAGE = &basename($0);
+my $VERSION = '1.1.0';
+my $PACKAGE_BUGREPORT = '"Andrew Janke" <a.janke@gmail.com>';
+
+my($Help, $Usage, $me, @opt_table, %opt, $infile, $outfile);
+
+$me = &basename($0);
+%opt = (
+   'verbose' => 0,
+   'clobber' => 0,
+   'fake' => 0,
+   'com' => 0,
+   'centre' => [0,0,0],
+   'zero_dircos' => 1,
+   );
+
+$Help = <<HELP;
+| $me will centre a MINC image's sampling about a point (0,0,0 typically)
+| 
+| NB: It will modify the file in-place unless an outfile is given
+|
+| Problems or comments should be sent to: a.janke\@gmail.com
+HELP
+
+$Usage = "Usage: $me [options] <infile.mnc> [<outfile.mnc>]\n".
+         "       $me -help to list options\n\n";
+
+@opt_table = (
+   ["-version", "call", 0, \&print_version_info,
+      "print version and exit" ],
+   ['-verbose', 'boolean', 0, \$opt{verbose},
+      'be verbose'],
+   ["-clobber", "boolean", 0, \$opt{clobber},
+      "clobber existing check files" ],
+   ['-fake', 'boolean', 0, \$opt{fake},
+      'do a dry run, (echo cmds only)' ],
+      
+   ["-com", "boolean", 0, \$opt{com},
+      "Use the CoM of the volume for the new centre (via mincstats)" ],
+   ["-centre", "float", 3, \@{$opt{centre}},
+      "Centre to use (x,y,z)",
+      "<float> <float> <float>" ],
+   ['-zero_dircos', 'boolean', 0, \$opt{zero_dircos},
+      'Set the direction cosines to identity' ],
+   );
+
+# Check arguments
+&Getopt::Tabular::SetHelp ($Help, $Usage);
+&GetOptions (\@opt_table, \@ARGV) || exit 1;
+die $Usage if ($#ARGV < 0);
+
+# get and check for infile
+$infile = $ARGV[0];
+die "$me: Couldn't find $infile\n" if (!-e $infile);
+
+# get name and create outfile if defined
+if(defined($ARGV[1])){
+   $outfile = $ARGV[1];
+   if(-e $outfile && !$opt{'clobber'}){
+      die "$me: $outfile exists, -clobber to overwrite\n\n";
+      }
+   
+   # create the outfile via cp
+   &do_cmd('cp', '-f', $infile, $outfile);
+   }
+
+else{
+   $outfile = $infile;
+   }
+
+# get the CoM if required
+if($opt{'com'}){
+   my($buf);
+   
+   print STDOUT "$me: Getting CoM from mincstats\n";
+   
+   chomp($buf = `mincstats -quiet -com -world_only $infile`);
+   
+   (@{$opt{'centre'}}) = split(/\ /, $buf, 3);
+   }
+
+print "$me: Using centre: [@{$opt{'centre'}}]\n";
+
+# figure out the starts and steps
+my($size, $step, $start, $newstart, $space);
+foreach $space ("xspace", "yspace", "zspace"){
+
+   my %space_map = ( 'xspace' => 0, 'yspace' => 1, 'zspace' => 2); 
+   
+   chomp($size = `mincinfo -dimlength $space $infile`);
+   chomp($step = `mincinfo -attvalue $space:step $infile`);
+   chomp($start = `mincinfo -attvalue $space:start $infile`);
+   
+   # if no centre defined, figure it out
+   if(@{$opt{'centre'}}[0] == 0 && 
+      @{$opt{'centre'}}[1] == 0 && 
+      @{$opt{'centre'}}[2] == 0){
+      
+      # calculate the new start and add in the offset
+      $newstart = -(($size * $step / 2.0 ) - ($step / 2.0 ));
+      }
+   # set it to what the user wants
+   else{
+      $newstart = $start - @{$opt{centre}}[$space_map{$space}];
+      }
+   
+   print "[$space]  new start: $newstart   old start: $start  diff: " . ($start - $newstart) . "\n";
+   
+   &do_cmd('minc_modify_header', '-dinsert', "$space:start=$newstart", $outfile);
+   }
+
+if($opt{zero_dircos}){
+   &do_cmd('minc_modify_header', '-dinsert', "xspace:direction_cosines=1,0,0", $outfile);
+   &do_cmd('minc_modify_header', '-dinsert', "yspace:direction_cosines=0,1,0", $outfile);
+   &do_cmd('minc_modify_header', '-dinsert', "zspace:direction_cosines=0,0,1", $outfile);
+   }
+
+
+sub do_cmd { 
+   print STDOUT "@_\n" if $opt{verbose};
+   if(!$opt{fake}){
+      system(@_) == 0 or die;
+   }
+}
+
+sub print_version_info {
+   print STDOUT "\n$PACKAGE version $VERSION\n".
+                "Comments to $PACKAGE_BUGREPORT\n\n";
+   exit;
+   }

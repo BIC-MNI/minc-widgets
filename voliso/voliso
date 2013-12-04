@@ -1,0 +1,194 @@
+#! /usr/bin/env perl
+#
+# Andrew Janke - a.janke@gmail.com
+# The Australian National University
+#
+# Copyright Andrew Janke, The Australian National University.
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies.  The
+# author and the University make no representations about the
+# suitability of this software for any purpose.  It is provided "as is"
+# without express or implied warranty.
+
+use strict;
+use warnings "all";
+use Getopt::Long;
+use Pod::Usage;
+use File::Basename;
+use File::Temp qw/ tempdir /;
+
+# until I get organised and do this properly
+my $PACKAGE = &basename($0);
+my $VERSION = '1.0.0';
+my $PACKAGE_BUGREPORT = '"Andrew Janke" <a.janke@gmail.com>';
+ 
+my($me, %opt, $infile, $outfile, @args, $tmpdir);
+
+$me = &basename($0);
+%opt = (
+   'verbose' => 0,
+   'clobber' => 0,
+   'fake' => 0,
+   'maxstep' => 1,
+   'minstep' => 0,
+   'avgstep' => 0,
+   );
+
+# Check arguments
+GetOptions(
+   'help|?' => \$opt{'help'},
+   'man' => \$opt{'man'},
+   'v|verbose' => \$opt{'verbose'},
+   'version' => sub { &print_version_info },
+   'c|clobber' => \$opt{'clobber'},
+   'f|fake' => \$opt{'fake'},
+   'maxstep=f' => \$opt{'maxstep'},
+   'minstep=f' => \$opt{'minstep'},
+   'avgstep' => \$opt{'avgstep'},
+   ) or pod2usage(-verbose => 1) && exit;
+
+# handle -man, -help or missing args
+pod2usage(-verbose => 1) if $opt{help};
+pod2usage(-exitstatus => 0, -verbose => 2) if $opt{man};
+pod2usage(-verbose => 0) && exit if ($#ARGV < 0);
+
+# get input arguments
+$infile = shift(@ARGV);
+$outfile = shift(@ARGV);
+
+# check for files
+die "$me: Couldn't find input file: $infile\n" if (!-e $infile);
+if(-e $outfile && !$opt{clobber}){
+   die "$me: $outfile exists, -clobber to overwrite\n";
+   }
+
+# make tmpdir
+$tmpdir = &tempdir( "$me-XXXXXXXX", TMPDIR => 1, CLEANUP => 1 );
+
+my($inxstep, $inystep, $inzstep, $xstep, $ystep, $zstep, $isostep);
+
+# get the input steps
+chomp($inxstep = `mincinfo -attvalue xspace:step $infile` * 1);
+chomp($inystep = `mincinfo -attvalue yspace:step $infile` * 1);
+chomp($inzstep = `mincinfo -attvalue zspace:step $infile` * 1);
+print STDOUT "+++ Input steps: [$inxstep, $inystep, $inzstep] +++\n" if $opt{'verbose'};
+
+# set maxstep to avgstep if required
+$opt{'maxstep'} = sprintf("%0.2g", ($inxstep + $inystep + $inzstep)/3) if $opt{'avgstep'};
+
+# max
+$xstep = ($inxstep > $opt{'maxstep'}) ? $opt{'maxstep'} : $inxstep;
+$ystep = ($inystep > $opt{'maxstep'}) ? $opt{'maxstep'} : $inystep;
+$zstep = ($inzstep > $opt{'maxstep'}) ? $opt{'maxstep'} : $inzstep;
+
+# min
+$xstep = ($inxstep < $opt{'minstep'}) ? $opt{'minstep'} : $xstep;
+$ystep = ($inystep < $opt{'minstep'}) ? $opt{'minstep'} : $ystep;
+$zstep = ($inzstep < $opt{'minstep'}) ? $opt{'minstep'} : $zstep;
+print STDOUT "+++ Resulting steps: [$xstep, $ystep, $zstep]" .
+   "  (minstep: $opt{'minstep'}) (maxstep: $opt{'maxstep'}) +++\n" if $opt{'verbose'};
+
+# set isostep to the max (to be sure)
+$isostep = ($xstep > $ystep) ? 
+              (($xstep > $zstep) ? $xstep : $zstep) : 
+              (($ystep > $zstep) ? $ystep : $zstep);
+print STDOUT "+++ Target ISO step: $isostep +++\n" if $opt{'verbose'};
+
+if($inxstep == $isostep && $inystep == $isostep && $inzstep == $isostep){
+   print STDOUT "---$infile steps [$inxstep, $inystep, $inzstep] are good\n";
+   @args = ('mincresample', '-clobber', '-short');
+   }
+else{
+   @args = ('autocrop', '-clobber', '-short', '-isostep', $isostep);
+   }
+
+&do_cmd(@args, $infile, $outfile);
+
+
+sub do_cmd { 
+   print STDOUT "@_\n" if $opt{verbose};
+   if(!$opt{fake}){
+      system(@_) == 0 or die;
+      }
+   }
+
+sub print_version_info {
+   print STDOUT "\n$PACKAGE version $VERSION\n".
+                "Comments to $PACKAGE_BUGREPORT\n\n";
+   exit;
+   }
+
+
+__END__
+
+=head1 NAME
+
+B<voliso> - forces a volumes sampling to be isotropic
+
+=head1 SYNOPSIS
+
+B<voliso> [options] <infile.mnc> <outfile.mnc>
+
+B<voliso> takes an input volume and changes the steps and starts
+in order that the output volume has isotropic sampling
+
+=head1 DESCRIPTION
+
+B<voliso> arose out of the need that tools such as N3 and minctracc prefer input
+volumes to be isotropically sampled. The major difference between this command 
+and autocrop is that it will only downsample the data if required. All files are 
+also converted to short as part of this process (to aid minctracc) if you dont
+like this, tough.  Change the code.
+
+ eg:
+    $ voliso -step 3 in.mnc out.mnc
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<-v>, B<--verbose>
+
+Be noisy when doing things (most importantly this will echo the resulting script to the terminal)
+
+=item B<--version>
+
+Print version number and exit
+
+=item B<-c>, B<--clobber>
+
+Overwrite existing files
+
+=item B<-h>, B<--help>
+
+Dump some quick help output
+
+=item B<--man>
+
+Dump a man page
+
+=item B<-f>, B<--fake>
+
+Do a dry run. This is usually only useful if combined with --verbose so that you can see what is going on.
+
+=item B<--maxstep>
+
+The target maximum step desired in the output volume
+
+=item B<--minstep>
+
+The target minimum step desired in the output volume
+
+=item B<--avgstep>
+
+Calculate the maximum step from the average steps of the input volume
+
+=back
+
+=head1 AUTHOR
+
+Problems or Comments to: Andrew Janke - B<a.janke@gmail.com>
+
+=cut
+

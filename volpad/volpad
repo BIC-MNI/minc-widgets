@@ -1,0 +1,214 @@
+#! /usr/bin/env perl
+#
+# Andrew Janke - a.janke@gmail.com
+#
+# Copyright Andrew Janke, The Australian National University
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies.  The
+# author and the University make no representations about the
+# suitability of this software for any purpose.  It is provided "as is"
+# without express or implied warranty.
+
+
+use strict;
+use warnings "all";
+use Getopt::Tabular;
+use File::Basename;
+use File::Temp qw/ tempdir /;
+
+# until I get organised and do this properly
+my $PACKAGE = &basename($0);
+my $VERSION = '1.0.0';
+my $PACKAGE_BUGREPORT = '"Andrew Janke" <a.janke@gmail.com>';
+
+my($Help, $Usage, $me);
+my(@opt_table, $tmpdir, %opt, @args, $infile, $outfile);
+
+$me = basename($0);
+$tmpdir = "/tmp/$me-$$";
+%opt = (
+   'verbose' => 0,
+   'clobber' => 0,
+   'fake' => 0,
+   'pad_auto' => 0,
+   'pad_distance' => 4,
+   'pad_freq' => 500,
+   'smooth' => 0, 
+   'smooth_distance' => 4,
+   );
+
+$Help = <<HELP;
+ | $me pads a MINC volume
+ |
+ | Problems or comments should be sent to: a.janke\@gmail.com
+HELP
+
+$Usage = "\nUsage: $me [options] <in.mnc> <out.mnc>\n".
+           "       $me -help to list options\n\n";
+
+@opt_table = (
+   ["General Options", "section" ],
+   ["-verbose", "boolean", 0, \$opt{'verbose'}, 
+      "be verbose" ],
+   ["-clobber", "boolean", 0, \$opt{'clobber'}, 
+      "clobber existing files" ],
+   ["-fake", "boolean", 0, \$opt{fake},
+      "do a dry run, (echo cmds only)" ],
+      
+   ["Pading Options", "section" ],
+   ["-auto", "boolean", 0, \$opt{'pad_auto'}, 
+      "automatically determine padding distances (uses -distance as max)" ],
+   ["-auto_freq", "integer", 1, \$opt{'pad_freq'}, 
+      "frequency of voxels over bimodalt threshold to stop at" ],
+   ["-distance", "integer", 1, \$opt{'pad_distance'}, 
+      "padding distance (in voxels)" ],
+   ["-smooth", "boolean",  0, \$opt{'smooth'}, 
+      "smooth (blur) edges before padding" ],
+   ["-smooth_distance", "integer", 1, \$opt{'smooth_distance'}, 
+      "smoothing distance (in voxels)" ],
+   );
+
+# Check arguments
+&Getopt::Tabular::SetHelp ($Help, $Usage);
+&GetOptions (\@opt_table, \@ARGV) || exit 1;
+die $Usage if ($#ARGV != 1);
+$infile = $ARGV[0];
+$outfile = $ARGV[1];
+
+# create temporary directory
+$tmpdir = &tempdir( "$me-XXXXXXXX", TMPDIR => 1, CLEANUP => 1 );
+
+# check for infile and outfile
+die "$me: Couldn't find $infile\n\n" if (!-e $infile);
+die "$me: $outfile exists!, use -clobber to overwrite\n\n" if (!$opt{'clobber'} && -e $outfile);
+
+
+# get infile sizes
+my($xsize, $ysize, $zsize);
+chomp($xsize = `mincinfo -dimlength xspace $infile`);
+chomp($ysize = `mincinfo -dimlength yspace $infile`);
+chomp($zsize = `mincinfo -dimlength zspace $infile`);
+print STDOUT "Sizes: [$xsize:$ysize:$zsize]\n" if $opt{'verbose'};
+
+# first blur the edges if required (assume 1 voxel = 1mm)
+if($opt{'smooth'}){
+   my $p = $opt{'smooth_distance'};
+   my($step_x, $step_y, $step_z);
+   
+   
+   # first shrink
+   &do_cmd('mincreshape', '-clobber',
+           '-dimrange', "xspace=$p," . ($xsize-2*$p),
+           '-dimrange', "yspace=$p," . ($ysize-2*$p),
+           '-dimrange', "zspace=$p," . ($zsize-2*$p),
+           $infile, "$tmpdir/shrunk.mnc");
+   
+   # set the inner (mask) to 1
+   &do_cmd('minccalc', '-clobber',
+           '-double',
+           '-expression', '1',
+           "$tmpdir/shrunk.mnc", "$tmpdir/shrunk-zero-d.mnc");
+   
+   # expand the mask filling with 0 as we go
+   &do_cmd('mincreshape', '-clobber',
+           '-dimrange', "xspace=" . (-1 * $p) . ",$xsize",
+           '-dimrange', "yspace=" . (-1 * $p) . ",$ysize",
+           '-dimrange', "zspace=" . (-1 * $p) . ",$zsize",
+           "$tmpdir/shrunk-zero-d.mnc", "$tmpdir/exp-zero-d.mnc");
+
+   # get step sizes
+   chomp($step_x = `mincinfo -attvalue xspace:step $tmpdir/exp-zero-d.mnc`);
+   chomp($step_y = `mincinfo -attvalue yspace:step $tmpdir/exp-zero-d.mnc`);
+   chomp($step_z = `mincinfo -attvalue zspace:step $tmpdir/exp-zero-d.mnc`);
+   
+   # blur the result to make a nice edge mask
+   &do_cmd('mincblur', '-clobber',
+           '-3dfwhm', ($step_x*2), ($step_y*2), ($step_z*2),
+           "$tmpdir/exp-zero-d.mnc", "$tmpdir/blur-mask");
+   
+   # muliply the original volume back in
+   &do_cmd('mincmath', '-clobber',
+           '-mult', 
+           $infile, "$tmpdir/blur-mask_blur.mnc", "$tmpdir/mask-blur.mnc");
+   $infile = "$tmpdir/mask-blur.mnc";
+   }
+
+# figure out padding distances
+my(%pad0, %pad1); 
+if($opt{'pad_auto'}){
+   my($bimodalt, $s, $pad_max, $length, $result, $c);
+   $pad_max = $opt{'pad_distance'};
+   
+   # get a BiModalT
+   &do_cmd('mincblur', '-clobber', '-fwhm', 2,
+      $infile, "$tmpdir/bimodalt");
+
+   # get BiModalT
+   chomp($bimodalt = `mincstats -quiet -biModalT $tmpdir/bimodalt_blur.mnc`);
+   
+   # step through the dimensions
+   foreach $s ('xspace', 'yspace', 'zspace'){
+      
+      # get first and last slices
+      chomp($length = `mincinfo -dimlength $s $infile`);
+      
+      # find the first slice above thresh + freq
+      $result = 0;
+      for ($c = 0; $c < ($length-1) && ($result < $opt{'pad_freq'}); $c++){
+         &do_cmd('mincreshape', '-quiet', '-clobber', 
+                 '-dimrange', "$s=$c,1",
+                 $infile, "$tmpdir/f-$s-$c.mnc");
+         
+         chomp($result = `mincstats -quiet -count -floor $bimodalt $tmpdir/f-$s-$c.mnc`);
+         }
+      $pad0{$s} = $c;
+      
+      # find the last slice above thresh + freq
+      $result = 0;
+      $c = $length - 1;
+      for ($c = ($length - 1); $c > 0 && ($result < $opt{'pad_freq'}); $c--){
+         &do_cmd('mincreshape', '-quiet', '-clobber', 
+                 '-dimrange', "$s=$c,1",
+                 $infile, "$tmpdir/f-$s-$c.mnc");
+         
+         chomp($result = `mincstats -quiet -count -floor $bimodalt $tmpdir/f-$s-$c.mnc`);
+         }
+      $pad1{$s} = ($length - 1) - $c;
+      
+      print STDOUT "pad[$s]:   $pad0{$s}:$pad1{$s} (max: $pad_max) => ";
+      
+      # figure out pad amounts
+      $pad0{$s} = ($pad0{$s} < $pad_max) ? $pad_max - $pad0{$s} + 1 : 0;
+      $pad1{$s} = ($pad1{$s} < $pad_max) ? $pad_max - $pad1{$s} + 1 : 0;
+      
+      print STDOUT "$pad0{$s}:$pad1{$s}\n";
+      }
+   }
+else{
+   $pad0{'xspace'} = $pad0{'yspace'} = $pad0{'zspace'} = $opt{'pad_distance'};
+   $pad1{'xspace'} = $pad1{'yspace'} = $pad1{'zspace'} = $opt{'pad_distance'};
+   }
+
+
+# pad the (possibly blurred) volume
+&do_cmd('mincreshape', '-clobber',
+        '-dimrange', "xspace=" . (-1 * $pad0{'xspace'}) . ',' . ($xsize+2*$pad1{'xspace'}),
+        '-dimrange', "yspace=" . (-1 * $pad0{'yspace'}) . ',' . ($ysize+2*$pad1{'yspace'}),
+        '-dimrange', "zspace=" . (-1 * $pad0{'zspace'}) . ',' . ($zsize+2*$pad1{'zspace'}),
+        $infile, $outfile);
+
+
+
+sub do_cmd {
+   print STDOUT "@_\n" if $opt{verbose};
+   if(!$opt{fake}){
+      system(@_) == 0 or die "\n$me: Failed executing @_\n\n";
+      }
+   }
+
+sub print_version_info {
+   print STDOUT "\n$PACKAGE version $VERSION\n".
+                "Comments to $PACKAGE_BUGREPORT\n\n";
+   exit 0;
+   }

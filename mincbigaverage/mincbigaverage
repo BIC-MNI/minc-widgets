@@ -395,6 +395,30 @@ Don't run anything, just echo the commands that would have been run
 Define a tmpdir, should be used with --robust as vast amount of data will
 be produced for a large number of input files
 
+=item B<-b>, B<--batch>
+
+Run using a batch system for parallel processing (qbatch).
+
+=item, B<--byte>
+
+Output files with byte precision
+
+=item, B<--short>
+
+Output files with short precision
+
+=item, B<--long>
+
+Output files with long precision
+
+=item, B<--float>
+
+Output files with float precision
+
+=item, B<--double>
+
+Output files with double precision
+
 =item B<--sdfile> 
 
 Place standard deviation image in specified file
@@ -412,6 +436,14 @@ Input file with the files to be averaged one per line
 Perform robust averaging, features that are outside 1 standard deviation
 from the mean are downweighted. Works well for noisy data with artifacts.
 see the --tmpdir option if you have a large number of input files.
+
+=item B<--robust_cutoff>
+
+Requires two floating point numbers following the argument. This defines 
+the cutoff points for robust averaging. The default of --robust_cutoff 1.0 1.2
+means that any data more than 1.0 standard deviation from the average will be
+linearly downweighted until 1.2 standard deviations from the mean at which point
+the weighting will be zero.
         
 =back
         

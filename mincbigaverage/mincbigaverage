@@ -24,7 +24,7 @@ use File::Temp qw/ tempdir /;
 
 # until I get organised and do this properly
 my $PACKAGE = &basename($0);
-my $VERSION = '1.1.0';
+my $VERSION = '1.3.0';
 my $PACKAGE_BUGREPORT = '"Andrew Janke" <a.janke@gmail.com>';
 
 my($Help, $Usage, $me, @opt_table, %opt, @infiles, $avgfile);
@@ -35,6 +35,7 @@ $me = &basename($0);
    'clobber' => 0,
    'fake' => 0,
    'tmpdir' => undef,
+   'batch' => 0,
    'avgnum' => 20,
    'sdfile' => undef,
    'filelist' => undef,
@@ -53,6 +54,7 @@ $me = &basename($0);
    'version' => sub { &print_version_info },
    'f|fake' => \$opt{'fake'},
    't|tmpdir=s' => \$opt{'tmpdir'},
+   'b|batch' => \$opt{'batch'},
    
    'byte' => sub { $opt{'output_type'} = '-byte' },
    'short' => sub { $opt{'output_type'} = '-short' },
@@ -67,7 +69,7 @@ $me = &basename($0);
    'robust' => \$opt{'robust'},
    'robust_cutoff=f{2}' => \@{$opt{'robust_cutoff'}},
    
-   ) or pod2usage(-verbose => 1) && exit;
+   ) or pod2usage('-verbose' => 1) && exit;
    
 
 # handle -man, -help or missing args
@@ -95,14 +97,15 @@ if(defined($opt{'sdfile'}) && -e $opt{'sdfile'} && !$opt{'clobber'}){
 # make tmpdir
 if(defined($opt{'tmpdir'})){
    &do_cmd('mkdir', '-p', $opt{'tmpdir'});
-   $opt{'tmpdir'} = &tempdir("$me-XXXXXXXX", TMPDIR => 1, DIR => $opt{'tmpdir'}, CLEANUP => 1);
+   $opt{'tmpdir'} = &tempdir("$me-XXXXXXXX", TMPDIR => 1, DIR => $opt{'tmpdir'}, CLEANUP => 0);
    }
 else{
-   $opt{'tmpdir'} = &tempdir("$me-XXXXXXXX", TMPDIR => 1, CLEANUP => 1);
+   $opt{'tmpdir'} = &tempdir("$me-XXXXXXXX", TMPDIR => 1, CLEANUP => 0);
    }
 
 # do the nasty
-my($i, $start, $stop, @avgfiles, $nfiles);
+my($i, $start, $stop, @avgfiles, $nfiles, @s1_preq, @s2_preq);
+@s1_preq = @s2_preq = ();
 for($i=0; $i<=$#infiles; $i+=$opt{'avgnum'}){
    
    $start = $i;
@@ -112,49 +115,55 @@ for($i=0; $i<=$#infiles; $i+=$opt{'avgnum'}){
    
    @avgfiles = @infiles[$start..$stop];
    
-   &do_cmd('minccalc', 
+   &do_cmd_batch("CALC$$-$i", 'none',
+      'minccalc', 
       '-max_buffer_size_in_kb', $opt{'max_buffer_size_in_kb'},
       '-quiet', '-clobber',
       '-double',
       '-expression', "s1 = s2 = 0; for {i in [0:len(A))} { v=A[i]; if (!isnan(v)) { s1 = s1 + v; s2 = s2 + v*v; } };",
-      '-outfile', 's1', "$opt{'tmpdir'}/s1-u.mnc",
-      '-outfile', 's2', "$opt{'tmpdir'}/s2-u.mnc",
+      '-outfile', 's1', "$opt{'tmpdir'}/s1-u-$i.mnc",
+      '-outfile', 's2', "$opt{'tmpdir'}/s2-u-$i.mnc",
       @avgfiles);
    
    print STDOUT "[CALC] ";
    
    # add to current total
    if($i == 0){
-      &do_cmd('mv', "$opt{'tmpdir'}/s1-u.mnc", "$opt{'tmpdir'}/s1.mnc");
-      &do_cmd('mv', "$opt{'tmpdir'}/s2-u.mnc", "$opt{'tmpdir'}/s2.mnc");
+      &do_cmd_batch("MVs1$$-$i","CALC$$-$i",
+         'mv', '-f', "$opt{'tmpdir'}/s1-u-$i.mnc", "$opt{'tmpdir'}/s1.mnc");
+      &do_cmd_batch("MVs2$$-$i","CALC$$-$i", 
+         'mv', '-f', "$opt{'tmpdir'}/s2-u-$i.mnc", "$opt{'tmpdir'}/s2.mnc");
       }
    else{
-      &do_cmd('mincmath', 
+      &do_cmd_batch("ADDs1$$-$i", join(",", ("CALC$$-$i", @s1_preq)),
+         'mincmath', 
          '-max_buffer_size_in_kb', $opt{'max_buffer_size_in_kb'},
          '-quiet', '-double', 
-         '-add', "$opt{'tmpdir'}/s1.mnc", "$opt{'tmpdir'}/s1-u.mnc", "$opt{'tmpdir'}/s1-t.mnc");
-      &do_cmd('mincmath', 
+         '-add', "$opt{'tmpdir'}/s1.mnc", "$opt{'tmpdir'}/s1-u-$i.mnc", "$opt{'tmpdir'}/s1-t.mnc");
+      &do_cmd_batch("ADDs2$$-$i", join(",", ("CALC$$-$i", @s2_preq)),
+         'mincmath', 
          '-max_buffer_size_in_kb', $opt{'max_buffer_size_in_kb'},
          '-quiet', '-double', 
-         '-add', "$opt{'tmpdir'}/s2.mnc", "$opt{'tmpdir'}/s2-u.mnc", "$opt{'tmpdir'}/s2-t.mnc");
-      &do_cmd('mv', '-f', "$opt{'tmpdir'}/s1-t.mnc", "$opt{'tmpdir'}/s1.mnc");
-      &do_cmd('mv', '-f', "$opt{'tmpdir'}/s2-t.mnc", "$opt{'tmpdir'}/s2.mnc");
-      }   
+         '-add', "$opt{'tmpdir'}/s2.mnc", "$opt{'tmpdir'}/s2-u-$i.mnc", "$opt{'tmpdir'}/s2-t.mnc");
+      
+      &do_cmd_batch("MVs1$$-$i","ADDs1$$-$i", 
+         'mv', '-f', "$opt{'tmpdir'}/s1-t.mnc", "$opt{'tmpdir'}/s1.mnc");
+      &do_cmd_batch("MVs2$$-$i","ADDs2$$-$i", 
+         'mv', '-f', "$opt{'tmpdir'}/s2-t.mnc", "$opt{'tmpdir'}/s2.mnc");
+      }
+   
+   push(@s1_preq, "MVs1$$-$i");
+   push(@s2_preq, "MVs2$$-$i");
    print STDOUT "[MV-ADD]\n";   
    }
 
-# setup output files
-my($iavg);
-if($opt{'robust'}){
-   $iavg = "$opt{'tmpdir'}/iavg.mnc";
-   }
-else{
-   $iavg = $avgfile;
-   }
+# setup output filename
+my $iavg = ($opt{'robust'}) ? "$opt{'tmpdir'}/iavg.mnc" : $avgfile;
 
 # average
 $nfiles = $#infiles + 1;
-&do_cmd('minccalc', '-clobber',
+&do_cmd_batch("IAVG$$", join(",", @s1_preq),
+   'minccalc', '-clobber',
    '-max_buffer_size_in_kb', $opt{'max_buffer_size_in_kb'},
    $opt{'output_type'},
    '-expression', "A[0] / $nfiles",
@@ -163,9 +172,9 @@ $nfiles = $#infiles + 1;
 
 # standard deviation
 if($opt{'sdfile'}){
-   
    my($nfiles_less_one) = $nfiles - 1;
-   &do_cmd('minccalc', '-clobber', 
+   &do_cmd_batch("ISTD$$", join(",", @s1_preq, @s2_preq),
+      'minccalc', '-clobber', 
       '-max_buffer_size_in_kb', $opt{'max_buffer_size_in_kb'},
       $opt{'output_type'},
       '-expression', "sqrt((A[1] - A[0]*A[0]/$nfiles) / $nfiles_less_one)",
@@ -177,6 +186,7 @@ if($opt{'sdfile'}){
 # do robust averaging if required
 if($opt{'robust'}){
    
+   my @add_preq = ();
    my @numer_files = ();
    my @denom_files = ();
    foreach $i (@infiles){
@@ -184,39 +194,39 @@ if($opt{'robust'}){
       
       my $bname = &basename($i);
       
-      &do_cmd('minccalc', '-clobber',
-         '-max_buffer_size_in_kb', 4096000,
-         '-expression', '(abs(A[2]) < 0.001) ? 0 : abs((A[0] - A[1])/A[2])',
+      &do_cmd_batch("RZ$$-$i", "IAVG$$,ISTD$$",
+         'minccalc', '-clobber',
+         '-max_buffer_size_in_kb', $opt{'max_buffer_size_in_kb'},
+         '-expression', 
+         "z = (abs(A[2]) < 0.001) ? 0 : abs((A[0] - A[1])/A[2]); " .
+         "m = (z < $opt{'robust_cutoff'}[0]) ? 1 : ((z > $opt{'robust_cutoff'}[1]) ? 0 : ".
+            "1 - ((z - $opt{'robust_cutoff'}[0])/($opt{'robust_cutoff'}[1] - $opt{'robust_cutoff'}[0]))); " .
+         "t = A[0] * m",
          $i, $iavg,  $opt{'sdfile'},
-         "$opt{'tmpdir'}/z.mnc");
+         '-outfile', 'm', "$opt{'tmpdir'}/$bname.m.mnc",
+         '-outfile', 't', "$opt{'tmpdir'}/$bname.t.mnc");
       
-      &do_cmd('minclookup', '-clobber',
-         '-range', 1.0, 1.2,
-         '-lut_string', '0 1; 1 0',
-         "$opt{'tmpdir'}/z.mnc", "$opt{'tmpdir'}/$bname.m.mnc");
-      
-      &do_cmd('mincmath', '-clobber',
-         '-max_buffer_size_in_kb', 4096000,
-         '-mult', $i, "$opt{'tmpdir'}/$bname.m.mnc",
-         "$opt{'tmpdir'}/$bname.t.mnc");
-        
+      push(@add_preq, "RZ$$-$i");
       push(@numer_files, "$opt{'tmpdir'}/$bname.t.mnc");
       push(@denom_files, "$opt{'tmpdir'}/$bname.m.mnc");
       }
 
-   &do_cmd('mincmath', '-clobber',
+   &do_cmd_batch("NUMER$$", join(",", @add_preq),
+      'mincmath', '-clobber',
       '-double',
-      '-max_buffer_size_in_kb', 4096000,
+      '-max_buffer_size_in_kb', $opt{'max_buffer_size_in_kb'},
       '-add', @numer_files, "$opt{'tmpdir'}/numer.mnc");
    
-   &do_cmd('mincmath', '-clobber',
+   &do_cmd_batch("DENOM$$", join(",", @add_preq),
+      'mincmath', '-clobber',
       '-double',
-      '-max_buffer_size_in_kb', 4096000,
+      '-max_buffer_size_in_kb', $opt{'max_buffer_size_in_kb'},
       '-add', @denom_files, "$opt{'tmpdir'}/denom.mnc");
    
-   &do_cmd('minccalc', '-clobber',
+   &do_cmd_batch("AVG$$", "DENOM$$,NUMER$$", 
+      'minccalc', '-clobber',
       $opt{'output_type'},
-      '-max_buffer_size_in_kb', 4096000,
+      '-max_buffer_size_in_kb', $opt{'max_buffer_size_in_kb'},
       '-expression', '(A[1] < 0.001) ? 0 : A[0]/A[1]',
       "$opt{'tmpdir'}/numer.mnc", "$opt{'tmpdir'}/denom.mnc",
       $avgfile);
@@ -231,6 +241,83 @@ sub do_cmd {
    }
 }
 
+# run a command via batch
+# 1st param: Job Name
+# 2nd param: Depends string
+# remainder: command
+my(%jids);
+sub do_cmd_batch {
+   my(@args, $name, $depends, $depends_str, $logdir, $buf, $jid);
+   $name = shift(@_);
+   $depends = shift(@_);
+
+   $logdir = "$opt{'tmpdir'}/log";
+   &do_cmd('mkdir', '-p', $logdir) if (!-e $logdir);
+   $jid = 0;
+
+   print STDOUT "[$name:$depends] - @_\n" if $opt{'verbose'};
+   if(!$opt{'fake'}){
+
+      if($opt{'batch'}){
+         print '   [B] ';
+         &do_cmd('mkdir', '-p', "$logdir/$$");
+        
+         # gather dependencies
+         my @ds = ();
+         foreach (split/\,/, $depends){
+            if(m/\*/){
+               my($regex) = $_;
+               $regex =~ s/\*/\.\*/g;
+
+               # search for jids with wildcard
+               foreach (sort(keys(%jids))){
+                  if(m/$regex/){
+                     push(@ds, $jids{$_});
+                     }
+                  }
+               }
+            elsif($_ eq 'none'){
+               # nothing
+               }
+            else{
+               # add the JID if it exists
+               push(@ds, $jids{$_}) if defined($jids{$_});
+               }
+            }
+          
+         # generate and submit the script
+         @args = ('qbatch',
+            '--jid',
+            '--queue', 'all.q', 
+            '--script', "$logdir/$$/$name.sh",
+            '--logfile', "$logdir/$$/$name.log",
+            '--name', $name,
+            (($#ds > -1) ? ('--depends', join(',', @ds)) : ()),
+            '--',
+            @_);
+         print join(' ', @args) . "\n" if $opt{'verbose'};
+         
+         # submit it
+         use IPC::Open2;
+         my $pid = open2(\*QBATCH_OUT, undef, @args);
+            
+         # close(QBATCH_IN);
+         waitpid($pid, 0);
+         while (<QBATCH_OUT>){
+            chomp;
+            $jid = $_;
+            }
+
+         print STDOUT "JID: $jid -- $name - $depends - " . join(',', @ds) . "\n";
+         
+         $jids{$name} = $jid;
+         }
+      else{
+         &do_cmd(@_);
+         }
+      }
+   }
+  
 sub print_version_info {
    print STDOUT "\n$PACKAGE version $VERSION\n".
                 "Comments to $PACKAGE_BUGREPORT\n\n";

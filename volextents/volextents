@@ -1,0 +1,192 @@
+#! /usr/bin/env perl
+#
+# calculate the extents of a bunch of MINC files
+#
+# Andrew Janke - a.janke@gmail.com
+#
+# Copyright Andrew Janke, The Australian National University.
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies.  The
+# author and the University make no representations about the
+# suitability of this software for any purpose.  It is provided "as is"
+# without express or implied warranty.
+
+
+use strict;
+use warnings "all";
+use Getopt::Tabular;
+use File::Basename;
+use POSIX qw / floor /;
+
+# until I get organised and do this properly
+my $PACKAGE = &basename($0);
+my $VERSION = '1.0.0';
+my $PACKAGE_BUGREPORT = '"Andrew Janke" <a.janke@gmail.com>';
+
+my($Help, $Usage, $me);
+my(@opt_table, %opt, @infiles, @args);
+
+$me = &basename($0);
+%opt = (
+   'verbose' => 0,
+   'step' => 1,
+   'int' => 0,
+   );
+
+$Help = <<HELP;
+| $me figures out the extents of a bunch of input MINC files
+| 
+| The output is in a form that can be used by mincresample
+|    the calculated extents will start from the foremost
+|    voxel of the foremost volume and extent to the number
+|    of voxels required to cover the entire volume(s). This
+|    will mean that $me will often produce extents that
+|    will extend beyond the required volume due to the step
+|    size that is chosen. There is only one way around this
+|    and that would be to instead centre the output sampling
+|    around the input volumes. This has not yet been
+|    implemented as I dont need it yet!  Feel free to whinge
+|    if you want it and I might just add it if vast quantites
+|    of chocolate are sent.
+| 
+|
+| Problems, comments and chocolate should be sent to: a.janke\@gmail.com
+HELP
+
+$Usage = "Usage: $me [options] <in1.mnc> [<in2.mnc> [...] ]\n".
+         "       $me -help to list options\n\n";
+
+@opt_table = (
+   ["General Options", "section" ],
+   ["-version", "call", 0, \&print_version_info,
+      "print version and exit" ],
+   ["-verbose", "boolean", 0, \$opt{verbose},
+      "be verbose" ],
+      
+   ["Extents Options", "section" ],
+   ["-step", "float", 1, \$opt{step},
+      "the step size of the output dimensions",
+      "<float>" ],
+   ["-int", "boolean", 1, \$opt{int},
+      "round the start position to an integer",
+      "<float>" ],
+   );
+
+# Check and get arguments
+&Getopt::Tabular::SetHelp($Help, $Usage);
+&GetOptions (\@opt_table, \@ARGV) || exit 1;
+die $Usage if($#ARGV < 0);
+@infiles = @ARGV;
+
+# check for files
+foreach (@infiles){
+   die "$me: Couldn't find input file: $_\n\n" if (!-e $_);
+   }
+
+# setup our min and max arrays
+my $large = 1.0e100;
+my @min = ($large, $large, $large);
+my @max = (-$large, -$large, -$large);
+
+# loop through the input files
+my($f, $x, $y, $z, $i, 
+   @vcoord, @wcoord, $args, @sizes, @dimorder, %dimhash, @data, $tmp);
+foreach $f (@infiles){
+   
+   # get the dimension sizes
+   @args = ('mincinfo',
+            '-dimlength', 'xspace',
+            '-dimlength', 'yspace',
+            '-dimlength', 'zspace',
+            $f);
+   $args = join(' ', @args);
+   @data = split(/\n/, `$args`);
+   
+   @sizes = @data[0..2];
+   
+   # get dimension order (MINC1 and MINC2 safe)
+   $args = "mincinfo -error_string ERROR -attvalue image:dimorder $f";
+   @data = split(/\n/, `$args`);
+   
+   if($data[0] eq 'ERROR'){
+      $args = "mincinfo -error_string ERROR -dimnames $f";
+      @data = split(/\n/, `$args`);
+      @dimorder = split(/\ /, $data[0]);
+      }
+   else{
+      @dimorder = split(/\,/, $data[0]);
+      }
+   
+   # setup dimmension order hash
+   for($i=0; $i<3; $i++){
+      $dimhash{$dimorder[$i]} = $i;
+      }
+   
+   # find the min and max's
+   foreach $x (0, $sizes[0]-1){
+      foreach $y (0, $sizes[1]-1){
+         foreach $z (0, $sizes[2]-1){
+            
+            # set up a co-ordinate so that we can index it
+            @vcoord = ($x, $y, $z);
+            
+            @args = ('voxeltoworld', $f,
+                     $vcoord[$dimhash{'xspace'}],
+                     $vcoord[$dimhash{'yspace'}],
+                     $vcoord[$dimhash{'zspace'}]);
+            $args = join(' ', @args);
+            chomp($tmp = `$args`);
+            
+            print STDOUT "VOLEXT: $args == $tmp\n" if $opt{'verbose'};
+            
+            (@wcoord) = split(/\ /, $tmp);
+            for($i=0; $i<3; $i++){
+               if($wcoord[$i] > $max[$i]){
+                  $max[$i] = $wcoord[$i];
+                  }
+               if($wcoord[$i] < $min[$i]){
+                  $min[$i] = $wcoord[$i];
+                  }
+               }
+            print STDOUT "[$f]: V[" . 
+                         join(',', @vcoord) . 
+                         "] - W[" . 
+                         join(',', @wcoord) . 
+                         "]\n" if $opt{verbose};
+            }
+         }
+      }
+   }
+
+# "round" the start co-ordinates if required
+if($opt{'int'}){
+   my ($val);
+   
+   foreach $val (@min){
+      $val = ($opt{'step'} > 0) ? &POSIX::floor($val) : &POSIX::ceil($val);
+      }
+   }
+
+
+print STDOUT "+++ MIN: @min\n+++ MAX: @max\n" if $opt{verbose};
+
+@args = ('-xstart', $min[0],
+         '-ystart', $min[1],
+         '-zstart', $min[2],
+         '-xstep', $opt{step},
+         '-ystep', $opt{step},
+         '-zstep', $opt{step},
+         '-xnelements', int(($max[0] - $min[0]) / $opt{step}) + 1,
+         '-ynelements', int(($max[1] - $min[1]) / $opt{step}) + 1,
+         '-znelements', int(($max[2] - $min[2]) / $opt{step}) + 1,
+         );
+print STDOUT join(" ", @args) . "\n";
+
+
+
+sub print_version_info {
+   print STDOUT "\n$PACKAGE version $VERSION\n".
+                "Comments to $PACKAGE_BUGREPORT\n\n";
+   exit;
+   }

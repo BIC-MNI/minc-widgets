@@ -36,6 +36,7 @@ $me = &basename($0);
    'fake' => 0,
    'tmpdir' => undef,
    'batch' => 0,
+   'batch_lastjobid' => undef,
    'avgnum' => 20,
    'sdfile' => undef,
    'filelist' => undef,
@@ -55,6 +56,7 @@ $me = &basename($0);
    'f|fake' => \$opt{'fake'},
    't|tmpdir=s' => \$opt{'tmpdir'},
    'b|batch' => \$opt{'batch'},
+   'batch_lastjobid=s' => \$opt{'batch_lastjob'},
    
    'byte' => sub { $opt{'output_type'} = '-byte' },
    'short' => sub { $opt{'output_type'} = '-short' },
@@ -223,13 +225,19 @@ if($opt{'robust'}){
       '-max_buffer_size_in_kb', $opt{'max_buffer_size_in_kb'},
       '-add', @denom_files, "$opt{'tmpdir'}/denom.mnc");
    
-   &do_cmd_batch("AVG$$", "DENOM$$,NUMER$$", 
+   $last_jid = &do_cmd_batch("AVG$$", "DENOM$$,NUMER$$", 
       'minccalc', '-clobber',
       $opt{'output_type'},
       '-max_buffer_size_in_kb', $opt{'max_buffer_size_in_kb'},
       '-expression', '(A[1] < 0.001) ? 0 : A[0]/A[1]',
       "$opt{'tmpdir'}/numer.mnc", "$opt{'tmpdir'}/denom.mnc",
       $avgfile);
+   
+   if(defined($opt{'batch_lastjobid'})){
+      open(FH, ">$opt{'batch_lastjid'}");
+      print FH "$last_jid\n";
+      close(FH);
+      }
    }
 
 
@@ -245,6 +253,7 @@ sub do_cmd {
 # 1st param: Job Name
 # 2nd param: Depends string
 # remainder: command
+# returns Job ID if in batch mode
 my(%jids);
 sub do_cmd_batch {
    my(@args, $name, $depends, $depends_str, $logdir, $buf, $jid);
@@ -311,9 +320,12 @@ sub do_cmd_batch {
          print STDOUT "JID: $jid -- $name - $depends - " . join(',', @ds) . "\n";
          
          $jids{$name} = $jid;
+         
+         return($jid);
          }
       else{
          &do_cmd(@_);
+         return($jid);
          }
       }
    }
@@ -398,6 +410,12 @@ be produced for a large number of input files
 =item B<-b>, B<--batch>
 
 Run using a batch system for parallel processing (qbatch).
+
+=item B<--batch_lastjobid>
+
+Filename to write out the job ID of the last of a mincaverage run. 
+This is usefull if running mincbigaverage within another script and you 
+need to wait for completion of mincbigaverage.
 
 =item, B<--byte>
 

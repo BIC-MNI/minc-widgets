@@ -225,7 +225,7 @@ if($opt{'robust'}){
       '-max_buffer_size_in_kb', $opt{'max_buffer_size_in_kb'},
       '-add', @denom_files, "$opt{'tmpdir'}/denom.mnc");
    
-   $last_jid = &do_cmd_batch("AVG$$", "DENOM$$,NUMER$$", 
+   my $last_jid = &do_cmd_batch("AVG$$", "DENOM$$,NUMER$$",
       'minccalc', '-clobber',
       $opt{'output_type'},
       '-max_buffer_size_in_kb', $opt{'max_buffer_size_in_kb'},

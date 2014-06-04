@@ -19,6 +19,11 @@ use Getopt::Tabular;
 use File::Basename;
 use File::Temp qw/ tempdir /;
 
+# until I get organised and do this properly
+my $PACKAGE = &basename($0);
+my $VERSION = '1.0.0';
+my $PACKAGE_BUGREPORT = '"Andrew Janke" <a.janke@gmail.com>';
+
 my($Help, $Usage, $me, $history);
 my(@opt_table, %opt, $infile, $outfile, @args, $tmpdir);
 
@@ -54,6 +59,9 @@ $Usage = "Usage: $me [options] <infile.mnc> <outfile.mnc>\n".
          "       $me -help to list options\n\n";
 
 @opt_table = (
+   ["General Options", "section" ],
+   ["-version", "call", 0, \&print_version_info,
+      "print version and exit" ],
    ["-verbose", "boolean", 0, \$opt{'verbose'},
       "be verbose" ],
    ["-clobber", "boolean", 0, \$opt{'clobber'},
@@ -321,4 +329,10 @@ sub do_cmd {
    if(!$opt{'fake'}){
       system(@_) == 0 or die;
       }
+   }
+
+sub print_version_info {
+   print STDOUT "\n$PACKAGE version $VERSION\n".
+                "Comments to $PACKAGE_BUGREPORT\n\n";
+   exit;
    }

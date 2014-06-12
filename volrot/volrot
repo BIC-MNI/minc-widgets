@@ -1,0 +1,132 @@
+#! /usr/bin/env perl
+#
+# Andrew Janke - a.janke@gmail.com
+#
+# Copyright Andrew Janke, The University of Queensland.
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies.  The
+# author and the University of Queensland make no representations about the
+# suitability of this software for any purpose.  It is provided "as is"
+# without express or implied warranty.
+
+
+use strict;
+use warnings "all";
+use Getopt::Tabular;
+use File::Basename;
+use File::Temp qw/ tempdir /;
+
+my($Help, $Usage, $me, @opt_table, $tmpdir, %opt);
+my(@args, $arg_string, $infile, $outfile);
+
+$me = basename($0);
+$tmpdir = "/tmp/$me-$$";
+%opt = ('verbose' => 0,
+        'clobber' => 0,
+        'fake' => 0,
+        'x_rot' => 0,
+        'y_rot' => 0,
+        'z_rot' => 0,
+        'xfm_fname' => undef, 
+        );
+
+$Help = <<HELP;
+ | $me rotates a MINC volume about the centre of the volume
+ |
+ | Problems or comments should be sent to: a.janke\@gmail.com
+HELP
+
+$Usage = "\nUsage: $me [options] <in.mnc> <out.mnc>\n".
+           "       $me -help to list options\n\n";
+
+@opt_table = (
+   ["-verbose", "boolean", 0, \$opt{'verbose'}, 
+      "be verbose" ],
+   ["-clobber", "boolean", 0, \$opt{'clobber'}, 
+      "clobber existing files" ],
+   ["-fake", "boolean", 0, \$opt{fake},
+      "do a dry run, (echo cmds only)" ],
+      
+   ["-right", "const", -90, \$opt{'z_rot'}, 
+      "rotate 90 degrees to patients right (Default)" ],
+   ["-left", "const", 90, \$opt{'z_rot'}, 
+      "rotate 90 degrees to patients left" ],
+   
+   ["-x_rotation", "float", 1, \$opt{'x_rot'}, 
+      "x rotation" ],
+   ["-y_rotation", "float", 1, \$opt{'y_rot'}, 
+      "y rotation" ],
+   ["-z_rotation", "float", 1, \$opt{'z_rot'}, 
+      "z rotation" ],
+      
+   ["-xfm_fname", "string",  1, \$opt{xfm_fname}, 
+      "Keep and save the resulting xfm file" ],
+   );
+
+# Check arguments
+&Getopt::Tabular::SetHelp ($Help, $Usage);
+&GetOptions (\@opt_table, \@ARGV) || exit 1;
+die $Usage if ($#ARGV != 1);
+$infile = $ARGV[0];
+$outfile = $ARGV[1];
+
+# create temporary directory
+$tmpdir = &tempdir( "$me-XXXXXXXX", TMPDIR => 1, CLEANUP => 1 );
+
+# check for infile and outfile
+die "$me: Couldn't find $infile\n" if (!-e $infile);
+die "$me: $outfile exists!, use -clobber to overwrite\n" if (!$opt{'clobber'} && -e $outfile);
+
+# set the default rotation
+if($opt{x_rot} == 0 && $opt{y_rot} == 0 && $opt{z_rot} == 0){
+   $opt{z_rot} = -90;
+   }
+
+# figure out the centre of the volume
+@args = ('mincinfo', 
+         '-attvalue', 'xspace:start', '-attvalue', 'xspace:step', '-dimlength', 'xspace',
+         '-attvalue', 'yspace:start', '-attvalue', 'yspace:step', '-dimlength', 'yspace',
+         '-attvalue', 'zspace:start', '-attvalue', 'zspace:step', '-dimlength', 'zspace',
+         $infile);
+$arg_string = join(' ', @args);
+
+my($xstart, $xstep, $xlength,
+   $ystart, $ystep, $ylength,
+   $zstart, $zstep, $zlength) = split(/\n/, `$arg_string`);
+
+my($x_cor) = $xstart + (($xlength-1)/2 * $xstep);
+my($y_cor) = $ystart + (($ylength-1)/2 * $ystep);
+my($z_cor) = $zstart + (($zlength-1)/2 * $zstep);
+
+# set up and check for xfm filename
+if(defined($opt{xfm_fname})){
+   if(-e $opt{xfm_fname} && !$opt{'clobber'}){
+      die "$me: $opt{xfm_fname} exists!, use -clobber to overwrite\n";
+      }
+   }
+else{
+   $opt{xfm_fname} = "$tmpdir/rot.xfm";
+   }
+
+# make transform
+unlink $opt{xfm_fname};
+&do_cmd('param2xfm', '-clobber', 
+        '-rotations', $opt{x_rot}, $opt{y_rot}, $opt{'z_rot'},
+        '-center', $x_cor, $y_cor, $z_cor,
+        $opt{xfm_fname});
+
+# resample the volume
+
+&do_cmd('mincresample', '-clobber',
+        '-use_input_sampling', '-nearest_neighbour',
+        '-transformation', $opt{xfm_fname},
+        $infile, $outfile);
+
+
+sub do_cmd {
+   print STDOUT "@_\n" if $opt{verbose};
+   if(!$opt{fake}){
+      system(@_) == 0 or die "\n$me: Failed executing @_\n\n";
+      }
+   }

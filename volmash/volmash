@@ -33,6 +33,7 @@ $me = &basename($0);
    'clobber' => 0,
    'swap' => undef,
    'stepscale' => undef,
+   'resetsampling' => undef,
    'salami' => undef,
    'sandwich' => undef,
    );
@@ -81,6 +82,9 @@ $Usage = "Usage: $me [options] <infile.mnc> <outfile.mnc>\n".
 
    ["-resetdircos", "boolean", 0, \$opt{'resetdircos'},
       "reset the direction cosines to the default"],
+
+   ["-resetsampling", "string", 1, \$opt{'resetsampling'},
+      "reset the starts and steps of the input volume to the specified volume"],
    
    ["-salami", "string", 1, \$opt{'salami'},
       "extract a regular series of slices from a volume " .
@@ -179,6 +183,7 @@ if(defined($opt{'swap'})){
       }
    }
 
+# scale steps
 if(defined($opt{'stepscale'})){
    my($xstep, $ystep, $zstep, $xstart, $ystart, $zstart);
    
@@ -230,6 +235,31 @@ if(defined($opt{'resetdircos'})){
    &do_cmd('minc_modify_header', '-dinsert', "zspace:direction_cosines=0,0,1", $outfile);
    }
 
+# reset starts and steps to be akin to the input volume
+if(defined($opt{'resetsampling'})){
+   my($xstep, $ystep, $zstep, $xstart, $ystart, $zstart);
+   
+   print STDOUT "Setting steps/starts of $outfile to $opt{'resetsampling'}\n";
+   
+   &do_cmd('cp', $infile, $outfile);
+
+   # get steps
+   chomp($xstep = `mincinfo -attvalue xspace:step $opt{'resetsampling'}`);
+   chomp($ystep = `mincinfo -attvalue yspace:step $opt{'resetsampling'}`);
+   chomp($zstep = `mincinfo -attvalue zspace:step $opt{'resetsampling'}`);
+   
+   chomp($xstart = `mincinfo -attvalue xspace:start $opt{'resetsampling'}`);
+   chomp($ystart = `mincinfo -attvalue yspace:start $opt{'resetsampling'}`);
+   chomp($zstart = `mincinfo -attvalue zspace:start $opt{'resetsampling'}`);
+   
+   # put them back in
+   &do_cmd('minc_modify_header', '-dinsert', "xspace:step=$xstep", $outfile);
+   &do_cmd('minc_modify_header', '-dinsert', "yspace:step=$ystep", $outfile);
+   &do_cmd('minc_modify_header', '-dinsert', "zspace:step=$zstep", $outfile);
+   &do_cmd('minc_modify_header', '-dinsert', "xspace:start=$xstart", $outfile);
+   &do_cmd('minc_modify_header', '-dinsert', "yspace:start=$ystart", $outfile);
+   &do_cmd('minc_modify_header', '-dinsert', "zspace:start=$zstart", $outfile);
+   }
 # salami
 if(defined($opt{'salami'})){
    my($offset, $step, $direction, $i, $dimlength, $dimstart, $dimstep);

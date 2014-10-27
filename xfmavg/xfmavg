@@ -116,6 +116,14 @@ if(-e $out_xfm && !$opt{'clobber'}){
    die "$me: $out_xfm exists! use -clobber to overwrite\n\n"; 
    }
 
+# check if octave is installed
+my($status, $buf);
+$buf = `octave --version`;
+$status = $?;
+if($status != 0){
+   die "$me: octave does not appear to be installed, is it in your PATH?\n\n";
+   }
+
 # parse the input transforms
 open(SCRIPT, ">$tmpdir/script.m");
 my(@first_xfm, $filec, $xfm_file, @varnames, @nl_xfms, 

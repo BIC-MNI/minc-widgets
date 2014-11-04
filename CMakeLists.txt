@@ -23,7 +23,7 @@ INSTALL(PROGRAMS ecat2hdf5/ecat2hdf5
     volrot/volrot
     volsymm/volsymm
     xfmavg/xfmavg
-    xfmdecomp/xfmdecomp
+    xfmdecomp/xfmdecomp.pl
     xfmflip/xfmflip
   PERMISSIONS
     OWNER_EXECUTE OWNER_WRITE OWNER_READ GROUP_EXECUTE GROUP_READ  WORLD_EXECUTE WORLD_READ

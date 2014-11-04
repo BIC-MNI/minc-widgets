@@ -1,3 +1,13 @@
+# CMakeFiles.txt for the minc-widgets
+#
+# 
+#
+# Andrew Janke - a.janke@gmail.com
+# Vladimir S. FONOV - vladimir.fonov@gmail.com
+
+PROJECT(minc-widgets)
+
+
 INSTALL(PROGRAMS
    ecat2hdf5
    gennlxfm
@@ -17,4 +27,5 @@ INSTALL(PROGRAMS
    xfmavg
    xfmdecomp
    xfmflip
-	DESTINATION bin )
+   DESTINATION bin )
+

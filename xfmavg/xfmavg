@@ -248,7 +248,7 @@ if(!defined($nl_xfms[0])){
    
    # execute the octave script
    print STDOUT "Calling octave\n" if $opt{verbose};
-   $args = "octave < $tmpdir/script.m";
+   $args = "octave --no-history < $tmpdir/script.m";
    
    if($opt{'verbose'}){
       $args .= "\n";

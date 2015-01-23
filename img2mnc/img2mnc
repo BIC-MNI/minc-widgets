@@ -83,7 +83,7 @@ chomp($buf = `identify -format "%w %h" $infile`);
 
 $znelem = 1;
 
-# get step size (scale to mm)
+# get step size (scale DPI to mm)
 chomp($buf = `identify -format "%x %y" $infile`);
 ($xstep, undef, $ystep, undef) = split(/\ /, $buf, 4);
 

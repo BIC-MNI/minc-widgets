@@ -1,0 +1,356 @@
+#! /usr/bin/env perl
+#
+# Andrew Janke - a.janke@gmail.com
+# http://a.janke.googlepages.com/
+#
+# Copyright 2015 Andrew Janke
+#
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies.
+# The author makes no representations about the suitability of this 
+# software for any purpose.  It is provided "as is" without express 
+# or implied warranty.
+
+$| = 1;
+
+
+#use strict;
+use warnings "all";
+use Getopt::Long;
+use Pod::Usage;
+use File::Basename;
+use File::Temp qw/ tempdir /;
+
+# until I get organised and do this properly
+my $PACKAGE = &basename($0);
+my $VERSION = '0.9.0';
+my $PACKAGE_BUGREPORT = '"Andrew Janke" <a.janke@gmail.com>';
+
+my($Help, $Usage, $me, @opt_table, %opt, @infile, $outfile);
+
+$me = &basename($0);
+%opt = (
+   'verbose' => 0,
+   'clobber' => 0,
+   'fake' => 0,
+   'tmpdir' => undef,
+   'batch' => 0,
+   'batch_lastjobid' => undef,
+   'output_type' => '-short',
+   'max_buffer_size_in_kb' => 1048576,
+   
+   'restack_dir' => 'zspace',
+   );
+
+# check arguments
+&GetOptions(
+   'help|?' => \$opt{'help'},
+   'man' => \$opt{'man'},
+   'v|verbose' => \$opt{'verbose'},
+   'c|clobber' => \$opt{'clobber'},
+   'version' => sub { &print_version_info },
+   'f|fake' => \$opt{'fake'},
+   't|tmpdir=s' => \$opt{'tmpdir'},
+   'b|batch' => \$opt{'batch'},
+   'batch_lastjobid=s' => \$opt{'batch_lastjob'},
+   
+   'x' => sub { $opt{'restack_dir'} = 'xspace' },
+   'y' => sub { $opt{'restack_dir'} = 'yspace' },
+   'z' => sub { $opt{'restack_dir'} = 'zspace' },
+   
+   'byte' => sub { $opt{'output_type'} = '-byte' },
+   'short' => sub { $opt{'output_type'} = '-short' },
+   'long' => sub { $opt{'output_type'} = '-long' },
+   'float' => sub { $opt{'output_type'} = '-float' },
+   'double' => sub { $opt{'output_type'} = '-double' },
+   
+   ) or pod2usage('-verbose' => 1) && exit;
+   
+
+# handle -man, -help or missing args
+pod2usage('-verbose' => 1) if $opt{'help'};
+pod2usage('-exitstatus' => 0, '-verbose' => 2) if $opt{'man'};
+pod2usage('-verbose' => 0) && exit if ($#ARGV != 1);
+
+# get and check for files
+$infile = shift(@ARGV);
+$outfile = shift(@ARGV);
+
+die "\n$me: Couldn't find input file: $infile\n\n" if !-e $infile;   
+if(-e $outfile && !$opt{'clobber'}){
+   die "$me: $outfile exists, -clobber to overwrite\n\n";
+   }
+
+# make tmpdir
+if(defined($opt{'tmpdir'})){
+   &do_cmd('mkdir', '-p', $opt{'tmpdir'});
+   $opt{'tmpdir'} = &tempdir("$me-XXXXXXXX", TMPDIR => 1, DIR => $opt{'tmpdir'}, CLEANUP => 0);
+   }
+else{
+   $opt{'tmpdir'} = &tempdir("$me-XXXXXXXX", TMPDIR => 1, CLEANUP => 0);
+   }
+
+
+# split the volume along the desired direction
+chomp($nelem = `mincinfo -dimlength $opt{'restack_dir'} $infile`);
+
+print "Nelem[$infile - $opt{'restack_dir'}]: $nelem\n";
+
+$s_files = [];
+for($i=0; $i<$nelem; $i++){
+   $i_txt = sprintf("%04d", $i);
+   $s_files[$i] = "$opt{'tmpdir'}/$i_txt.mnc";
+   &do_cmd('mincreshape', '-clobber', 
+      "-dimrange", "$opt{'restack_dir'}=$i,0", $infile, $s_files[$i]);
+   }
+
+
+# then align the s_files array
+
+# align to -1 and +1
+
+
+# average
+
+
+# apply
+
+
+# rinse and repeat
+
+
+
+
+sub do_cmd { 
+   print STDOUT "@_\n" if $opt{'verbose'};
+   if(!$opt{'fake'}){
+      system(@_) == 0 or die;
+   }
+}
+
+# run a command via batch
+# 1st param: Job Name
+# 2nd param: Depends string
+# remainder: command
+# returns Job ID if in batch mode
+my(%jids);
+sub do_cmd_batch {
+   my(@args, $name, $depends, $depends_str, $logdir, $buf, $jid);
+   $name = shift(@_);
+   $depends = shift(@_);
+
+   $logdir = "$opt{'tmpdir'}/log";
+   &do_cmd('mkdir', '-p', $logdir) if (!-e $logdir);
+   $jid = 0;
+
+   print STDOUT "[$name:$depends] - @_\n" if $opt{'verbose'};
+   if(!$opt{'fake'}){
+
+      if($opt{'batch'}){
+         print '   [B] ';
+         &do_cmd('mkdir', '-p', "$logdir/$$");
+        
+         # gather dependencies
+         my @ds = ();
+         foreach (split/\,/, $depends){
+            if(m/\*/){
+               my($regex) = $_;
+               $regex =~ s/\*/\.\*/g;
+
+               # search for jids with wildcard
+               foreach (sort(keys(%jids))){
+                  if(m/$regex/){
+                     push(@ds, $jids{$_});
+                     }
+                  }
+               }
+            elsif($_ eq 'none'){
+               # nothing
+               }
+            else{
+               # add the JID if it exists
+               push(@ds, $jids{$_}) if defined($jids{$_});
+               }
+            }
+          
+         # generate and submit the script
+         @args = ('qbatch',
+            '--jid',
+            '--queue', 'all.q', 
+            '--script', "$logdir/$$/$name.sh",
+            '--logfile', "$logdir/$$/$name.log",
+            '--name', $name,
+            (($#ds > -1) ? ('--depends', join(',', @ds)) : ()),
+            '--',
+            @_);
+         print join(' ', @args) . "\n" if $opt{'verbose'};
+         
+         # submit it
+         use IPC::Open2;
+         my $pid = open2(\*QBATCH_OUT, undef, @args);
+            
+         # close(QBATCH_IN);
+         waitpid($pid, 0);
+         while (<QBATCH_OUT>){
+            chomp;
+            $jid = $_;
+            }
+
+         print STDOUT "JID: $jid -- $name - $depends - " . join(',', @ds) . "\n";
+         
+         $jids{$name} = $jid;
+         
+         return($jid);
+         }
+      else{
+         &do_cmd(@_);
+         return($jid);
+         }
+      }
+   }
+  
+sub print_version_info {
+   print STDOUT "\n$PACKAGE version $VERSION\n".
+                "Comments to $PACKAGE_BUGREPORT\n\n";
+   exit;
+   }
+   
+   
+   
+$Help = <<HELP;
+| $me will align the slices in a MINC volume
+|
+| Problems or comments should be sent to: a.janke\@gmail.com
+HELP
+
+
+        
+__END__  
+         
+=head1 NAME
+         
+B<volrestack> - restack a MINC volume.
+         
+=head1 SYNOPSIS                                                                                                                        
+         
+B<volrestack> [options] infile.mnc outfile.mnc
+         
+mincbigaverage is designed to discretise the problem of averaging either
+a large number of input files or averaging a smaller number of large 
+files. (>1GB each). There is also some code included to perform "robust"
+averaging in which only the most common features are kept via down-weighting
+outliers beyond a standard deviation.
+         
+   $ mincbigaverage --verbose --robust_average \
+       in1.mnc in2.mnc in3.mnc in4.mnc avg.mnc
+         
+=head1 DESCRIPTION
+         
+B<mincbigaverage> is to get around issues of the number of possible open
+files in HDF/netCDF. In short if you have more than 100 files open at once
+while averaging things will slow down significantly.
+
+mincbigaverage does this via a iterative approach to averaging files and
+is a direct drop in replacement for mincaverage. That said not all the 
+arguments of mincaverage are supported in mincbigaverage but they should
+be. (in time).
+         
+Problems or comments should be sent to: a.janke@gmail.com
+         
+=head1 OPTIONS
+         
+=over 4  
+         
+=item B<-v>, B<--verbose>
+         
+Be noisy when doing things
+         
+=item B<--version>
+         
+Print version number and exit
+         
+=item B<-h>, B<--help>
+         
+Dump some quick help output
+         
+=item B<--man>
+         
+Dump a man page
+         
+=item B<-f>, B<--fake>
+         
+Don't run anything, just echo the commands that would have been run
+
+=item B<-t>, B<--tmpdir>
+         
+Define a tmpdir, should be used with --robust as vast amount of data will
+be produced for a large number of input files
+
+=item B<-b>, B<--batch>
+
+Run using a batch system for parallel processing (qbatch).
+
+=item B<--batch_lastjobid>
+
+Filename to write out the job ID of the last of a mincaverage run. 
+This is usefull if running mincbigaverage within another script and you 
+need to wait for completion of mincbigaverage.
+
+=item, B<--byte>
+
+Output files with byte precision
+
+=item, B<--short>
+
+Output files with short precision
+
+=item, B<--long>
+
+Output files with long precision
+
+=item, B<--float>
+
+Output files with float precision
+
+=item, B<--double>
+
+Output files with double precision
+
+=item B<--sdfile> 
+
+Place standard deviation image in specified file
+
+=item B<--avgnum>
+
+Number of input files to average at a time (Default: 20)
+
+=item B<--filelist>
+
+Input file with the files to be averaged one per line
+
+=item B<--robust>
+
+Perform robust averaging, features that are outside 1 standard deviation
+from the mean are downweighted. Works well for noisy data with artifacts.
+see the --tmpdir option if you have a large number of input files.
+
+=item B<--robust_cutoff>
+
+Requires two floating point numbers following the argument. This defines 
+the cutoff points for robust averaging. The default of --robust_cutoff 1.0 1.2
+means that any data more than 1.0 standard deviation from the average will be
+linearly downweighted until 1.2 standard deviations from the mean at which point
+the weighting will be zero.
+        
+=back
+        
+=head1 SEE ALSO
+        
+mincaverage(1) minccalc(1)
+    
+=head1 AUTHOR
+        
+Andrew Janke - a.janke@gmail.com
+        
+=cut 

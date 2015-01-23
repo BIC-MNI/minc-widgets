@@ -180,13 +180,13 @@ if(defined($outfile) && -e $outfile && !$opt{clobber}){
    }
 
 # make tmpdir
-if(defined($opt{tmpdir})){
+if(defined($opt{'tmpdir'})){
    # just in case
-   &do_cmd('mkdir', '-p', $opt{tmpdir});
-   $opt{tmpdir} = &tempdir( "$me-XXXXXXXX", DIR => $opt{tmpdir}, CLEANUP => (($opt{'keeptmp'}) ? 0 : 1) );
+   &do_cmd('mkdir', '-p', $opt{'tmpdir'});
+   $opt{'tmpdir'} = &tempdir( "$me-XXXXXXXX", DIR => $opt{tmpdir}, CLEANUP => (($opt{'keeptmp'}) ? 0 : 1) );
    }
 else{
-   $opt{tmpdir} = &tempdir( "$me-XXXXXXXX", TMPDIR => 1, CLEANUP => (($opt{'keeptmp'}) ? 0 : 1) );
+   $opt{'tmpdir'} = &tempdir( "$me-XXXXXXXX", TMPDIR => 1, CLEANUP => (($opt{'keeptmp'}) ? 0 : 1) );
    }
 
 # set up filename base

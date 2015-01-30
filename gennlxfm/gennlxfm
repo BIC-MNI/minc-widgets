@@ -97,8 +97,16 @@ print XFM "MNI Transform File\n" .
           "% Created by $me\n" .
           "%\n" .
           "% $history \n" .
-          "\n" .
-          "Transform_Type = Grid_Transform;\n".
+          "\n";
+
+# add in linear identity matrix
+print XFM "Transform_Type = Linear;\n" .
+          "Linear_Transform =\n" .
+          " 1 0 0 0\n" .
+          " 0 1 0 0\n" .
+          " 0 0 1 0;\n" if $opt{'ident'};
+
+print XFM "Transform_Type = Grid_Transform;\n".
           "Displacement_Volume = $outgrid_base;\n";
 close(XFM);
 

@@ -12,6 +12,13 @@
 # software for any purpose.  It is provided "as is" without express 
 # or implied warranty.
 
+        # &do_cmd('ANTS', 2, 
+        #    '-m', "MI[$s_files[$c-1].nii,$s_files[$c].nii,1,32]",
+        #    '-i', 0,
+        #    '-o', $prev_xfm
+        #    );
+        
+        
 $| = 1;
 
 
@@ -29,6 +36,16 @@ my $PACKAGE_BUGREPORT = '"Andrew Janke" <a.janke@gmail.com>';
 
 my($Help, $Usage, $me, @opt_table, %opt, @infile, $outfile);
 
+# default minctracc parameters as optimised by Steve Robbins
+# in his PhD thesis (McGill)
+my @def_minctracc_args = (
+   '-nonlinear', 'corrcoeff',
+   '-weight', 1,
+   '-stiffness', 1,
+   '-similarity', 0.3,
+   '-sub_lattice', 6,
+   );
+
 $me = &basename($0);
 %opt = (
    'verbose' => 0,
@@ -41,6 +58,7 @@ $me = &basename($0);
    'max_buffer_size_in_kb' => 1048576,
    
    'restack_dir' => 'zspace',
+   'iterations' => 7,
    );
 
 # check arguments
@@ -65,6 +83,7 @@ $me = &basename($0);
    'float' => sub { $opt{'output_type'} = '-float' },
    'double' => sub { $opt{'output_type'} = '-double' },
    
+   'i|iterations=i' => \$opt{'iterations'},
    ) or pod2usage('-verbose' => 1) && exit;
    
 
@@ -92,33 +111,189 @@ else{
    }
 
 
+# setup reg args
+$small = 0.000001;
+@reg_args = (
+   '-w_translations', 1, 1, $small,
+   '-w_rotations', $small, $small, 0.0174533,
+   '-w_scales', 0.02, 0.02, $small,
+   '-w_shear', 0.02, 0.02, $small,
+   );
+
+
+
 # split the volume along the desired direction
 chomp($nelem = `mincinfo -dimlength $opt{'restack_dir'} $infile`);
 
 print "Nelem[$infile - $opt{'restack_dir'}]: $nelem\n";
 
+# setup r_files array
 $s_files = [];
+$r_files = [];
 for($i=0; $i<$nelem; $i++){
    $i_txt = sprintf("%04d", $i);
    $s_files[$i] = "$opt{'tmpdir'}/$i_txt.mnc";
+   $r_files[$i] = "$opt{'tmpdir'}/R_$i_txt.mnc";
    &do_cmd('mincreshape', '-clobber', 
-      "-dimrange", "$opt{'restack_dir'}=$i,0", $infile, $s_files[$i]);
+      "-dimrange", "$opt{'restack_dir'}=$i,1", $infile, $s_files[$i]);
+   
+   &do_cmd('cp', $s_files[$i], $r_files[$i]);
+   &do_cmd('minc_modify_header', 
+      '-dinsert', "zspace:step=500", 
+      '-dinsert', "zspace:start=-250", $r_files[$i]);
    }
 
-
-# then align the s_files array
-
-# align to -1 and +1
-
-
-# average
+# made identity transformation
+$ident_xfm = "$opt{'tmpdir'}/ident.xfm";
+&do_cmd('param2xfm', '-clobber', $ident_xfm);
 
 
-# apply
+@fit_conf = (
+   {'step' => 32, 'blur_fwhm' => 16, 'iterations' => 20},
+   {'step' => 16, 'blur_fwhm' => 8,  'iterations' => 20},
+   {'step' => 12, 'blur_fwhm' => 6,  'iterations' => 20},
+   {'step' => 8,  'blur_fwhm' => 4,  'iterations' => 20},
+   {'step' => 6,  'blur_fwhm' => 3,  'iterations' => 20},
+   {'step' => 4,  'blur_fwhm' => 2,  'iterations' => 10},
+   {'step' => 2,  'blur_fwhm' => 1,  'iterations' => 10},
+   );
 
+@fit_steps = ("lin", "lin", "lin", 0, 1, 2, 3);
 
-# rinse and repeat
+# iteration
+$i = 0;
 
+$last_lin_step = 0;
+for($i=0; $i<$opt{'iterations'}; $i++){
+   $i_txt = sprintf("%03d", $i);
+   
+   print "--- ITERATION $i_txt\n";
+
+   # then align the s_files array
+   for($c=0; $c<=$#s_files; $c++){
+      $c_txt = sprintf("%03d", $c);
+      
+      $init_xfm = "$opt{'tmpdir'}/$i_txt-$c_txt-init.xfm";
+      $prev_xfm = "$opt{'tmpdir'}/$i_txt-$c_txt-to--1.xfm";
+      $next_xfm = "$opt{'tmpdir'}/$i_txt-$c_txt-to-+1.xfm";
+      $avg_xfm[$i][$c] = "$opt{'tmpdir'}/$i_txt-$c_txt-avg.xfm";
+      
+      $res_file[$i][$c] = "$opt{'tmpdir'}/$i_txt-$c_txt-res.mnc";
+      
+      print "[$i_txt] Doing [$c_txt], \n";
+      print "[$i_txt] P-XFM $prev_xfm\n";
+      print "[$i_txt] N-XFM $next_xfm\n";
+      print "[$i_txt] A-XFM $avg_xfm[$i][$c]\n";
+      
+      # setup transformation type
+      if($fit_steps[$i] eq "lin"){
+         @trans_args = ('-lsq6');
+         $last_lin_step = $i;
+         }
+      else{
+         @trans_args = @def_minctracc_args;
+         
+         $step = $fit_conf[$fit_steps[$i]]{'step'};
+         
+         print "+++++Step: $step\n";
+         push(@trans_args, "-step", $step, $step, $step);
+         }
+      
+      # setup initial xfm
+      if($i == 0){
+         $init_xfm = $ident_xfm;
+         }
+      else{
+         if($fit_steps[$i] eq 'lin'){
+            $init_xfm = $avg_xfm[$i-1][$c];
+            }
+         else{
+            &do_cmd('gennlxfm', '-clobber',
+              '-like', $r_files[$c],
+              '-step', $fit_conf[$fit_steps[$i]]{'step'},
+              "$opt{'tmpdir'}/nl-ident-$c_txt.xfm");
+            
+            &do_cmd('xfmconcat', 
+               $avg_xfm[$last_lin_step][$c],
+               "$opt{'tmpdir'}/nl-ident-$c_txt.xfm",
+               $init_xfm); 
+            }
+         }
+      
+      # transform from prev slice
+      if($c == 0){
+         if($fit_steps[$i] eq "lin"){
+            $prev_xfm = $ident_xfm;
+            }
+         else{
+            &do_cmd('gennlxfm',
+              '-ident',
+              '-like', $r_files[$c],
+              '-step', $fit_conf[$fit_steps[$i]]{'step'},
+              $prev_xfm);
+           }
+         }
+      else{
+         
+         print "PREV LLS: $last_lin_step - $avg_xfm[$last_lin_step][$c]\n";
+         &do_cmd('minctracc', '-clobber',
+            @reg_args,
+            @trans_args,
+            '-transformation', $init_xfm,
+            (($i == 0) ? $r_files[$c-1] : $res_file[$i-1][$c-1]),
+            $r_files[$c],
+            $prev_xfm);
+         }
+      
+      # transform from next slice
+      if($c == $#s_files){
+         if($fit_steps[$i] eq "lin"){
+            $next_xfm = $ident_xfm;
+            }
+         else{
+            &do_cmd('gennlxfm',
+              '-ident',
+              '-like', $r_files[$c],
+              '-step', $fit_conf[$fit_steps[$i]]{'step'},
+              $next_xfm);
+           }
+         }
+      else{
+         print "NEXT LLS: $last_lin_step - $avg_xfm[$last_lin_step][$c]\n";
+         &do_cmd('minctracc', '-clobber',
+            @reg_args,
+            @trans_args,
+            '-transformation',  $init_xfm,
+            (($i == 0) ? $r_files[$c+1] : $res_file[$i-1][$c+1]),
+            $r_files[$c],
+            $next_xfm);
+         }
+      
+      # averge xfms
+      &do_cmd("xfmavg", '-clobber',
+         (($fit_steps[$i] eq "lin") ? '-ignore_nonlinear' : '-ignore_linear'),
+         $prev_xfm, $next_xfm, $avg_xfm[$i][$c]);
+      
+      print "[$i_txt] [$c_txt] --- TRANSFORM ----\n";
+      $buf = `xfm2param $avg_xfm[$i][$c]`;
+      print "$buf";
+      print "[$i_txt] [$c_txt] ------------------\n";
+      
+      # apply
+      &do_cmd("mincresample", '-clobber', 
+         '-use_input_sampling',
+         '-nearest_neighbour',
+         '-invert',
+         '-transformation', $avg_xfm[$i][$c],
+         $s_files[$c], $res_file[$i][$c]);
+      }
+   
+   
+   # figure out final version
+   if($i == $opt{'iterations'}){
+      print "LAST ITERATION\n\n";
+      }   
+   }
 
 
 
@@ -232,7 +407,7 @@ __END__
          
 B<volrestack> - restack a MINC volume.
          
-=head1 SYNOPSIS                                                                                                                        
+=head1 SYNOPSIS
          
 B<volrestack> [options] infile.mnc outfile.mnc
          

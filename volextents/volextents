@@ -21,7 +21,7 @@ use POSIX qw / floor /;
 
 # until I get organised and do this properly
 my $PACKAGE = &basename($0);
-my $VERSION = '1.0.0';
+my $VERSION = '1.1.0';
 my $PACKAGE_BUGREPORT = '"Andrew Janke" <a.janke@gmail.com>';
 
 my($Help, $Usage, $me);

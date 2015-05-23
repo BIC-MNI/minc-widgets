@@ -1,0 +1,170 @@
+#! /usr/bin/env perl
+#
+# take a hack at unfolding a file
+
+$| = 1;
+
+use warnings "all";
+use Getopt::Tabular;
+use File::Basename;
+use File::Temp qw/ tempdir /;
+
+my($Help, $Usage, $me, @opt_table, $tmpdir, %opt);
+my(@args, $arg_string, $infile, $outfile);
+
+$me = basename($0);
+%opt = ('verbose' => 0,
+        'clobber' => 0,
+        'fake' => 0,
+        'x_rot' => 0,
+        'y_rot' => 0,
+        'z_rot' => 0,
+        );
+
+$Help = <<HELP;
+ | $me is an attempt to remove folding in a minc volume
+ |
+ | Problems or comments should be sent to: a.janke\@gmail.com
+HELP
+
+$Usage = "\nUsage: $me [options] <in.mnc> <out.mnc>\n".
+           "       $me -help to list options\n\n";
+
+@opt_table = (
+   ["-verbose", "boolean", 0, \$opt{'verbose'}, 
+      "be verbose" ],
+   ["-clobber", "boolean", 0, \$opt{'clobber'}, 
+      "clobber existing files" ],
+   ["-fake", "boolean", 0, \$opt{fake},
+      "do a dry run, (echo cmds only)" ],
+   );
+
+# Check arguments
+&Getopt::Tabular::SetHelp ($Help, $Usage);
+&GetOptions (\@opt_table, \@ARGV) || exit 1;
+die $Usage if ($#ARGV != 1);
+$infile = $ARGV[0];
+$outfile = $ARGV[1];
+
+# create temporary directory
+$tmpdir = &tempdir( "$me-XXXXXXXX", TMPDIR => 1, CLEANUP => 1 );
+
+# check for infile and outfile
+die "$me: Couldn't find $infile\n\n" if (!-e $infile);
+die "$me: $outfile exists, use -clobber to overwrite\n\n" if (!$opt{clobber} && -e $outfile);
+
+# get dimension order
+chomp($buf = `mincinfo -dimnames $infile`);
+@dims = split(/\ /, $buf);
+
+foreach $dim (@dims){
+   
+   chomp($size{$dim} = `mincinfo -dimlength $dim $infile`);
+   
+   print STDOUT "Checking $dim -- [$size{$dim}]";
+   
+   # for each slice
+   $min_idx = 0;
+   $min = 9999999999999999999999;
+   @means = ();
+   foreach $slice (0..$size{$dim}-1){
+      
+      &do_cmd('mincreshape', '-quiet', '-clobber',
+              '-dimrange', "$dim=$slice,0",
+              $infile, "$tmpdir/slice.mnc");
+      chomp($mean = `mincstats -quiet -mean $tmpdir/slice.mnc`);
+      
+      print STDOUT "  | $dim-[$slice] -- $mean\n" if $opt{verbose};
+      
+      # find the minimum
+      if($mean < $min){
+         $min = $mean;
+         $min_idx = $slice;
+         }
+      
+      push(@means, $mean);
+      print STDOUT ".";
+      }
+   
+   # store the minimum slice
+   $min{$dim} = $min;
+   $min_idx{$dim} = $min_idx;
+   
+   print STDOUT " Min: $min [$min_idx]\n";
+   
+   }
+
+# check for a reorient and do so if required
+$working_fn = $infile;
+print STDOUT "-- Minimums for $infile --\n";
+foreach $dim (@dims){
+   print STDOUT " $dim\[$min_idx{$dim}] = $min{$dim}\n";
+
+   if($min_idx{$dim} == 0 || $min_idx{$dim} == $size{$dim}-1){
+      print STDOUT " No fold for $dim\n";
+      next;
+      }
+
+   # reshape so that the concat dimension is not an image dimension
+   if($dims[0] ne $dim){
+
+      $dimorder = $dim;
+      foreach(@dims){
+         $dimorder .= ",$_" if ($_ ne $dim);
+         }
+
+      print STDOUT "Reshaping to $dimorder\n";
+      &do_cmd('mincreshape', '-clobber',
+              '-dimorder', $dimorder,
+              $working_fn, "$tmpdir/$dim-reshaped.mnc");
+
+      $working_fn = "$tmpdir/$dim-reshaped.mnc";
+      }
+   
+   # chop the dimension in two
+   &do_cmd('mincreshape', '-clobber',
+           '-dimrange', "$dim=$min_idx{$dim}," . ($size{$dim} - $min_idx{$dim}),
+           $working_fn, "$tmpdir/folded.$dim.mnc");
+   &do_cmd('mincreshape', '-clobber',
+           '-dimrange', "$dim=0,$min_idx{$dim}",
+           $working_fn, "$tmpdir/good.$dim.mnc");
+   
+   # get the correct start co-ordinate
+   chomp($start = `mincinfo -attvalue $dim:start $tmpdir/good.$dim.mnc`);
+   chomp($step = `mincinfo -attvalue $dim:step $tmpdir/good.$dim.mnc`);
+   $start *= 1;
+   $step *= 1;
+   
+   # join the 2 bits back together
+   &do_cmd('mincconcat', '-clobber',
+           '-concat_dimension', $dim,
+           '-sequential',
+           "$tmpdir/folded.$dim.mnc", "$tmpdir/good.$dim.mnc",
+           "$tmpdir/concat.$dim.mnc");
+   $working_fn = "$tmpdir/concat.$dim.mnc";
+   
+   # put the start back to what it should be
+   if($min_idx{$dim} > $size{$dim} / 2){
+      $start -= ($size{$dim} - $min_idx{$dim}) * $step;
+      }
+   else{
+      $start -= $min_idx{$dim} * $step;
+      }
+      
+   &do_cmd('minc_modify_header', 
+           '-dinsert', "$dim:start=$start",
+           '-dinsert', "$dim:step=$step",
+           $working_fn);
+   }
+
+# reshape back to the original dimorder
+&do_cmd('mincreshape', '-clobber',
+        '-dimorder', join(',', @dims),
+        $working_fn, $outfile);
+
+sub do_cmd {
+   print STDOUT "@_\n" if $opt{verbose};
+   if(!$opt{fake}){
+      system(@_) == 0 or die "\n$me: Failed executing @_\n\n";
+      }
+   }

@@ -21,7 +21,7 @@ use POSIX qw / floor /;
 
 # until I get organised and do this properly
 my $PACKAGE = &basename($0);
-my $VERSION = '1.0.0';
+my $VERSION = '1.1.0';
 my $PACKAGE_BUGREPORT = '"Andrew Janke" <a.janke@gmail.com>';
 
 my($Help, $Usage, $me);
@@ -91,9 +91,8 @@ my @max = (-$large, -$large, -$large);
 
 # loop through the input files
 my($f, $x, $y, $z, $i, 
-   @vcoord, @wcoord, $args, @sizes, @dimorder, %dimhash, @data, $tmp);
+   %vcoord, @wcoord, $args, @sizes, @dimorder, @data, $tmp);
 foreach $f (@infiles){
-   
    # get the dimension sizes
    @args = ('mincinfo',
             '-dimlength', 'xspace',
@@ -104,6 +103,7 @@ foreach $f (@infiles){
    @data = split(/\n/, `$args`);
    
    @sizes = @data[0..2];
+   print STDOUT "[$f] Sizes XYZ " . join("|", @sizes) . "\n" if $opt{'verbose'};
    
    # get dimension order (MINC1 and MINC2 safe)
    $args = "mincinfo -error_string ERROR -attvalue image:dimorder $f";
@@ -117,11 +117,7 @@ foreach $f (@infiles){
    else{
       @dimorder = split(/\,/, $data[0]);
       }
-   
-   # setup dimmension order hash
-   for($i=0; $i<3; $i++){
-      $dimhash{$dimorder[$i]} = $i;
-      }
+   print STDOUT "[$f] Dimorder " . join("|", @dimorder) . "\n" if $opt{'verbose'};
    
    # find the min and max's
    foreach $x (0, $sizes[0]-1){
@@ -129,16 +125,16 @@ foreach $f (@infiles){
          foreach $z (0, $sizes[2]-1){
             
             # set up a co-ordinate so that we can index it
-            @vcoord = ($x, $y, $z);
+            %vcoord = ('xspace' => $x,
+                       'yspace' => $y,
+                       'zspace' => $z);
             
             @args = ('voxeltoworld', $f,
-                     $vcoord[$dimhash{'xspace'}],
-                     $vcoord[$dimhash{'yspace'}],
-                     $vcoord[$dimhash{'zspace'}]);
+                     $vcoord{$dimorder[0]},
+                     $vcoord{$dimorder[1]},
+                     $vcoord{$dimorder[2]});
             $args = join(' ', @args);
             chomp($tmp = `$args`);
-            
-            print STDOUT "VOLEXT: $args == $tmp\n" if $opt{'verbose'};
             
             (@wcoord) = split(/\ /, $tmp);
             for($i=0; $i<3; $i++){
@@ -149,14 +145,15 @@ foreach $f (@infiles){
                   $min[$i] = $wcoord[$i];
                   }
                }
-            print STDOUT "[$f]: V[" . 
-                         join(',', @vcoord) . 
-                         "] - W[" . 
+            print STDOUT "[$f] V[$x,$y,$z] - W[" . 
                          join(',', @wcoord) . 
-                         "]\n" if $opt{verbose};
+                         "]\t\t($args)\n" if $opt{'verbose'};
             }
          }
       }
+   print STDOUT "[$f] +++ CMIN: @min\n" . 
+                "[$f] +++ CMAX: @max\n" if $opt{'verbose'};
+   print STDOUT "\n" if $opt{'verbose'};
    }
 
 # "round" the start co-ordinates if required
@@ -169,17 +166,17 @@ if($opt{'int'}){
    }
 
 
-print STDOUT "+++ MIN: @min\n+++ MAX: @max\n" if $opt{verbose};
+print STDOUT "+++ MIN: @min\n+++ MAX: @max\n" if $opt{'verbose'};
 
 @args = ('-xstart', $min[0],
          '-ystart', $min[1],
          '-zstart', $min[2],
-         '-xstep', $opt{step},
-         '-ystep', $opt{step},
-         '-zstep', $opt{step},
-         '-xnelements', int(($max[0] - $min[0]) / $opt{step}) + 1,
-         '-ynelements', int(($max[1] - $min[1]) / $opt{step}) + 1,
-         '-znelements', int(($max[2] - $min[2]) / $opt{step}) + 1,
+         '-xstep', $opt{'step'},
+         '-ystep', $opt{'step'},
+         '-zstep', $opt{'step'},
+         '-xnelements', int(($max[0] - $min[0]) / $opt{'step'}) + 1,
+         '-ynelements', int(($max[1] - $min[1]) / $opt{'step'}) + 1,
+         '-znelements', int(($max[2] - $min[2]) / $opt{'step'}) + 1,
          );
 print STDOUT join(" ", @args) . "\n";
 

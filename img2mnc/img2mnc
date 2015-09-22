@@ -115,6 +115,8 @@ my @convert_args = ($opt{'rgb'}) ? () : ("-type", "Grayscale");
 chomp($buf = `identify -format "%w %h" $infiles[0]`);
 ($xnelem, $ynelem) = split(/\ /, $buf, 2);
 
+
+
 for($i=0; $i<=$#infiles; $i++){
    my($xnelem_i, $ynelem_i);
    
@@ -131,17 +133,39 @@ for($i=0; $i<=$#infiles; $i++){
    my $rawfile = sprintf("$opt{'tmpdir'}/%05d-$base.raw", $i);
    print "$me: Working on $infiles[$i] - $rawfile\n";
    
-   &do_cmd('convert', '-flip', 
+   #&do_cmd('convert', '-flip', 
+   #   '-depth', $opt{'depth'},
+   #   @convert_args, 
+   #   $infiles[$i], "$code:$rawfile");
+   
+   @args = ('convert', '-flip', 
       '-depth', $opt{'depth'},
       @convert_args, 
-      $infiles[$i], "$code:$rawfile");
+      $infiles[$i], "$code:-");
    
-   push(@catfiles, $rawfile)
+   # should do this with a perl open or open2 in case of input file names with spaces...
+   # it will happen
+   &do_cmd(join(' ', @args) . " >> $opt{'tmpdir'}/all.raw");
+   
+#   push(@catfiles, $rawfile)
    }
 
 # create rawfile
-@args = ('cat', @catfiles, '>', "$opt{'tmpdir'}/all.raw");
-&do_cmd(join(' ', @args));
+#open(OFH, ">$opt{'tmpdir'}/all.raw");
+#binmode(OFH);
+#for($i=0; $i<=$#catfiles; $i++){
+#   my $buf = "";
+#   open(IFH, "<", $catfiles[$i]);
+#   binmode(IFH);
+#   
+#   while( read(IFH, $buf, 65536) != 0){
+#      print OFH $buf;
+#      }
+#   
+#   close(IFH);
+#   }
+#
+#close(OFH);
 
 # slice parameters
 $znelem = $#infiles + 1;
@@ -158,24 +182,28 @@ $ystep = $ystep / $MM_PER_INCH;
 $xstart = -1 * ($xnelem * $xstep) / 2;
 $ystart = -1 * ($ynelem * $ystep) / 2;
 
-
+# create the MINC file
 &do_cmd('rawtominc', '-2', '-clobber',
    '-zyx', 
    '-nomodality',
-   '-sattribute', ":history='$history'",
    (($opt{'depth'} == 8) ? ('-byte') : ('-short', '-unsigned')),
    (($opt{'rgb'}) ? ('-vector', 3) : ()),
    '-xstep', $xstep, '-ystep', $ystep, '-zstep', $zstep,
    '-xstart', $xstart, '-ystart', $ystart, '-zstart', $zstart,
    '-input', "$opt{'tmpdir'}/all.raw",
    $outfile, $znelem, $ynelem, $xnelem);
-   
+
+
+# add the history string to the output file
+&do_cmd('minc_modify_header',
+   '-sappend', ":history='$history'",
+   $outfile);
 
 
 
 sub do_cmd { 
-   print STDOUT "@_\n" if $opt{verbose};
-   if(!$opt{fake}){
+   print STDOUT "@_\n" if $opt{'verbose'};
+   if(!$opt{'fake'}){
       system(@_) == 0 or die;
       }
    }
@@ -245,7 +273,7 @@ Dump a man page
 
 =item B<-f>, B<--fake>
 
-Do a dry run. This is usually only useful if combined with --verbose so that you can see what is going on.
+Do a dry run, just echo commands that would be run when combined with -verbose
 
 =item B<-t>, B<--tmpdir>
          

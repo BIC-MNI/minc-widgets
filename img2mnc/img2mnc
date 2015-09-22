@@ -172,7 +172,7 @@ $znelem = $#infiles + 1;
 $zstep = $opt{'slice_step'} // 1;
 $zstart = $opt{'slice_start'} // (-1 * ($znelem * $zstep) / 2);
 
-# get step size (scale to mm)
+# get step size (scale DPI to mm)
 chomp($buf = `identify -format "%x %y" $infiles[0]`);
 ($xstep, undef, $ystep, undef) = split(/\ /, $buf, 4);
 $xstep = $xstep / $MM_PER_INCH;

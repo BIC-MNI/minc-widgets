@@ -20,7 +20,12 @@ use Getopt::Tabular;
 use File::Basename;
 use File::Temp qw/ tempdir /;
 
-my($Help, $Usage, $me, @opt_table, %opt);
+# until I get organised and do this properly
+my $PACKAGE = &basename($0);
+my $VERSION = '1.2.0';
+my $PACKAGE_BUGREPORT = '"Andrew Janke" <a.janke@gmail.com>';
+
+my($Help, $Usage, $me, @opt_table, $history, %opt);
 my($tmpdir, $infile, $outxfm, $outfile);
 
 $me = &basename($0);
@@ -29,41 +34,54 @@ $me = &basename($0);
    'quiet' => 0,
    'clobber' => 0,
    'fake' => 0,
+   'mirror_dim' => 'x',
    'method' => 'minctracc',
    'align_center' => 'voxel',
    );
 
 $Help = <<HELP;
 | $me is designed to align MINC file about its axis of symmetry.
-|    (currently the Y-Z plane -- this currently cant be changed)
-| This is done via registering an image to a flipped version of 
-| itself and halving the resulting xfm.
-| 
+|    This is done via registering an image to a flipped version of
+|    itself and halving the resulting xfm with xfmavg.
+|
 | Problems or comments should be sent to: a.janke\@gmail.com
 HELP
 
 $Usage = "Usage: $me [options] <infile.mnc> <align.xfm> [<outfile.mnc>]\n".
          "       $me -help to list options\n\n";
 @opt_table = (
-   ["-verbose", "boolean", 0, \$opt{verbose},
+   ["General Options", "section" ],
+   ["-version", "call", 0, \&print_version_info,
+      "print version and exit" ],
+   ["-verbose", "boolean", 0, \$opt{'verbose'},
       "be verbose" ],
-   ["-quiet", "boolean", 0, \$opt{quiet},
-        "be vewwy quiet (wabbits probably)" ],
-   ["-clobber", "boolean", 0, \$opt{clobber},
+   ["-quiet", "boolean", 0, \$opt{'quiet'},
+        "be quiet)" ],
+   ["-clobber", "boolean", 0, \$opt{'clobber'},
       "clobber existing files" ],
-   ["-fake", "boolean", 0, \$opt{fake},
+   ["-fake", "boolean", 0, \$opt{'fake'},
       "do a dry run, (echo cmds only)" ],
-      
+
    ["Registration options", "section" ],
-   ["-minctracc",  "const", 'minctracc', \$opt{method},  
+   ["-x",  "const", 'x', \$opt{'mirror_dim'},
+      "mirror in the x dimension [default]" ],
+   ["-y",  "const", 'y', \$opt{'mirror_dim'},
+      "mirror in the y dimension" ],
+   ["-z",  "const", 'z', \$opt{'mirror_dim'},
+      "mirror in the z dimension" ],
+   ["-minctracc",  "const", 'minctracc', \$opt{'method'},
       "Use minctracc [default]" ],
-   ["-mritoself",  "const", 'mritoself', \$opt{method},  
+   ["-mritoself",  "const", 'mritoself', \$opt{'method'},
       "Use mritoself" ],
-   ["-voxel",  "const", 'voxel', \$opt{align_center},  
+   ["-voxel",  "const", 'voxel', \$opt{'align_center'},
       "Align about the center voxel of the volume [default]" ],
-   ["-world",  "const", 'world', \$opt{align_center},  
+   ["-world",  "const", 'world', \$opt{'align_center'},
       "Align about world co-ordinate 0,0,0" ],
    );
+
+# get history string
+chomp($history = `date`);
+$history .= '>>>> ' . join(' ', $me, @ARGV);
 
 # check args
 &Getopt::Tabular::SetHelp($Help, $Usage);
@@ -71,7 +89,7 @@ $Usage = "Usage: $me [options] <infile.mnc> <align.xfm> [<outfile.mnc>]\n".
 die $Usage if ($#ARGV < 1);
 
 # make tmpdir
-$tmpdir = &tempdir( "$me-XXXXXXXX", TMPDIR => 1, CLEANUP => 1 );
+$tmpdir = &tempdir( "$me-XXXXXXXX", TMPDIR => 1, CLEANUP => 0 );
 
 # get file names
 $infile = shift(@ARGV);
@@ -82,92 +100,71 @@ $outfile = ($#ARGV > -1) ? shift(@ARGV) : undef;
 if(!-e $infile){
    die "$me: Couldn't find input file: $infile\n\n";
    }
-if(-e $outxfm && !$opt{clobber}){
+if(-e $outxfm && !$opt{'clobber'}){
    die "$me: $outxfm exists, -clobber to overwrite\n\n";
    }
-if(defined $outfile && -e $outfile && !$opt{clobber}){
+if(defined $outfile && -e $outfile && !$opt{'clobber'}){
    die "$me: $outfile exists, -clobber to overwrite\n\n";
+   }
+
+# a bit of output
+if(!$opt{'quiet'}){
+   print STDOUT " | infile:  $infile\n";
+   print STDOUT " | xfm:     $outxfm\n";
+   print STDOUT " | outfile: $outfile\n" if defined($outfile);
    }
 
 # figure out the symmetry center
 my(@center);
-if($opt{align_center} eq 'world'){
-   @center = (0,0,0);
+if($opt{'align_center'} eq 'world'){
+   # make the inversion transform
+   &do_cmd('param2xfm', '-clobber',
+      '-center', 0, 0, 0,
+      '-scales' ,
+      ($opt{'mirror_dim'} eq 'x') ? -1 : 1,
+      ($opt{'mirror_dim'} eq 'y') ? -1 : 1,
+      ($opt{'mirror_dim'} eq 'z') ? -1 : 1,
+      "$tmpdir/inv.xfm");
+
+   &do_cmd('mincresample', '-clobber',
+      '-use_input_sampling',
+      '-transformation', "$tmpdir/inv.xfm",
+      $infile, "$tmpdir/flip-$opt{'mirror_dim'}.mnc");
    }
-elsif($opt{align_center} eq 'voxel'){
-   my($buf, $tmp, @dimnames, @sizes);
-   
-   # get dimnames
-   chomp($buf = `mincinfo -dimnames $infile`);
-   @dimnames = split(/\ /, $buf);
-   
-   # get 1/2 sizes
-   foreach (@dimnames){
-      chomp($tmp = `mincinfo -dimlength $_ $infile`);
-      $tmp /= 2;
-      push(@sizes, $tmp);
-      }
-   
-   $tmp = join(' ', @sizes);
-   chomp($buf = `voxeltoworld $infile $tmp`);
-   @center = split(' ', $buf);
+
+elsif($opt{'align_center'} eq 'voxel'){
+   # flip the input file
+   &do_cmd('volflip', '-clobber',
+      "-$opt{'mirror_dim'}",
+      $infile, "$tmpdir/flip-$opt{'mirror_dim'}.mnc");
    }
+
 else{
-   die "$me: This shouldn't happen, something if broken\n\n";
-   }
-   
-
-# a bit of output
-if(!$opt{quiet}){
-   print STDOUT " | infile:  $infile\n";
-   print STDOUT " | xfm:     $outxfm\n";
-   print STDOUT " | outfile: $outfile\n" if defined($outfile);
-   print STDOUT " | center: [" . join('|', @center) . "]\n" if defined($outfile);
+   die "$me: This shouldn't happen, something is broken\n\n";
    }
 
-# make the inversion transform
-&do_cmd('param2xfm', '-clobber', 
-        '-center', @center,
-        '-scales' ,-1, 1, 1,
-        "$tmpdir/inv.xfm");
-
-# invert the input file
-&do_cmd('mincresample', '-clobber',
-        '-use_input_sampling',
-        '-transformation', "$tmpdir/inv.xfm",
-        $infile, "$tmpdir/inv.mnc");
 
 # create a registration xfm file
-&do_cmd($opt{method}, '-clobber',
+&do_cmd($opt{'method'}, '-clobber',
         '-xcorr', '-lsq6',
-        (($opt{method} eq 'minctracc') ? '-est_center' : ()),
-        $infile, "$tmpdir/inv.mnc",
+        (($opt{'method'} eq 'minctracc') ? '-est_center' : ()),
+        $infile, "$tmpdir/flip-$opt{'mirror_dim'}.mnc",
         "$tmpdir/reg.xfm");
 
-# get info from the registration transform
-my(@trans, @rotns, $c);
-foreach (`xfm2param $tmpdir/reg.xfm`){
-   if    (m/\-translation/){ (undef, @trans) = split; }
-   elsif (m/\-rotation/)   { (undef, @rotns) = split; }
+if($opt{'verbose'}){
+   my $line;
+   foreach $line (`xfm2param $tmpdir/reg.xfm`){
+      print STDOUT " | $line";
+      }
    }
 
-# divide through by 2 to get half the transform
-for($c=0; $c<3; $c++){ 
-   $trans[$c] /= 2;
-   $rotns[$c] /= 2;
-   }
-
-if(!$opt{quiet}){
-   print STDOUT "| Translations are: @trans\n";
-   print STDOUT "| Rotations are:    @rotns\n";
-   }
-
+# make ident xfm
+&do_cmd('param2xfm', "$tmpdir/ident.xfm");
 
 # Make the 1/2 xfm
-&do_cmd('param2xfm', '-clobber',
-        '-center', @center,
-        '-translation', @trans,
-        '-rotations', @rotns,
+&do_cmd('xfmavg', '-clobber',
+        '-ignore_nonlinear',
+        "$tmpdir/ident.xfm", "$tmpdir/reg.xfm",
         $outxfm);
 
 # create the resampled file if required
@@ -177,13 +174,25 @@ if(defined $outfile){
            '-use_input_sampling',
            '-transformation', $outxfm,
            $infile, $outfile);
+
+   # add the history string to the output file
+   &do_cmd('minc_modify_header',
+      '-sappend', ":history='$history'",
+      $outfile);
    }
 
 
 
 sub do_cmd {
-   print STDOUT "@_\n" if $opt{verbose};
-   if(!$opt{fake}){
+   print STDOUT "@_\n" if $opt{'verbose'};
+   if(!$opt{'fake'}){
       system(@_) == 0 or die;
       }
+   }
+
+
+sub print_version_info {
+   print STDOUT "\n$PACKAGE version $VERSION\n".
+                "Comments to $PACKAGE_BUGREPORT\n\n";
+   exit;
    }

@@ -31,27 +31,28 @@ $me = &basename($0);
 $Help = <<HELP;
 | $me flips a volume about its centre (volume not world) there
 |    are far easier ways to flip a volume about its world centre
-|    than this.
+|    than this. mincresample with an inverted transformation
+|    being the most straight forward.
 | 
-| Problems or comments should be sent to: rotor\@cmr.uq.edu.au
+| Problems or comments should be sent to: a.janke\@gmail.com
 HELP
 
 $Usage = "Usage: $me [options] <infile.mnc> <outfile.mnc>\n".
          "       $me -help to list options\n\n";
 
 @opt_table = (
-   ["-verbose", "boolean", 0, \$opt{verbose},
+   ["-verbose", "boolean", 0, \$opt{'verbose'},
       "be verbose" ],
-   ["-clobber", "boolean", 0, \$opt{clobber},
+   ["-clobber", "boolean", 0, \$opt{'clobber'},
       "clobber existing check files" ],
-   ["-fake", "boolean", 0, \$opt{fake},
+   ["-fake", "boolean", 0, \$opt{'fake'},
       "do a dry run, (echo cmds only)" ],
       
-   ["-x", "const", 'x', \$opt{direction},
+   ["-x", "const", 'x', \$opt{'direction'},
       "flip volume in x-plane (default)" ],
-   ["-y", "const", 'y', \$opt{direction},
+   ["-y", "const", 'y', \$opt{'direction'},
       "flip volume in y-plane" ],
-   ["-z", "const", 'z', \$opt{direction},
+   ["-z", "const", 'z', \$opt{'direction'},
       "flip volume in z-plane" ],
    );
    
@@ -100,8 +101,8 @@ chomp($step = `mincinfo -attvalue $opt{direction}space:step $infile`);
    $outfile);
 
 sub do_cmd { 
-   print STDOUT "@_\n" if $opt{verbose};
-   if(!$opt{fake}){
+   print STDOUT "@_\n" if $opt{'verbose'};
+   if(!$opt{'fake'}){
       system(@_) == 0 or die;
       }
    }

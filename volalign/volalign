@@ -26,7 +26,7 @@ my $VERSION = '1.3.0';
 my $PACKAGE_BUGREPORT = '"Andrew Janke" <a.janke@gmail.com>';
 
 my($Help, $Usage, $me, @opt_table, $history, %opt);
-my($tmpdir, $infile, $outxfm, $outfile);
+my($infile, $outxfm, $outfile);
 
 $me = &basename($0);
 %opt = (
@@ -138,19 +138,19 @@ if($opt{'align_center'} eq 'world'){
       ($opt{'mirror_dim'} eq 'x') ? -1 : 1,
       ($opt{'mirror_dim'} eq 'y') ? -1 : 1,
       ($opt{'mirror_dim'} eq 'z') ? -1 : 1,
-      "$tmpdir/inv.xfm");
+      "$opt{'tmpdir'}/inv.xfm");
 
    &do_cmd('mincresample', '-clobber',
       '-use_input_sampling',
-      '-transformation', "$tmpdir/inv.xfm",
-      $infile, "$tmpdir/flip-$opt{'mirror_dim'}.mnc");
+      '-transformation', "$opt{'tmpdir'}/inv.xfm",
+      $infile, "$opt{'tmpdir'}/flip-$opt{'mirror_dim'}.mnc");
    }
 
 elsif($opt{'align_center'} eq 'voxel'){
    # flip the input file
    &do_cmd('volflip', '-clobber',
       "-$opt{'mirror_dim'}",
-      $infile, "$tmpdir/flip-$opt{'mirror_dim'}.mnc");
+      $infile, "$opt{'tmpdir'}/flip-$opt{'mirror_dim'}.mnc");
    }
 
 else{
@@ -162,23 +162,23 @@ else{
 &do_cmd($opt{'method'}, '-clobber',
         '-xcorr', '-lsq6',
         (($opt{'method'} eq 'minctracc') ? '-est_center' : ()),
-        $infile, "$tmpdir/flip-$opt{'mirror_dim'}.mnc",
-        "$tmpdir/reg.xfm");
+        $infile, "$opt{'tmpdir'}/flip-$opt{'mirror_dim'}.mnc",
+        "$opt{'tmpdir'}/reg.xfm");
 
 if($opt{'verbose'}){
    my $line;
-   foreach $line (`xfm2param $tmpdir/reg.xfm`){
+   foreach $line (`xfm2param $opt{'tmpdir'}/reg.xfm`){
       print STDOUT " | $line";
       }
    }
 
 # make ident xfm
-&do_cmd('param2xfm', "$tmpdir/ident.xfm");
+&do_cmd('param2xfm', "$opt{'tmpdir'}/ident.xfm");
 
 # Make the 1/2 xfm
 &do_cmd('xfmavg', '-clobber',
         '-ignore_nonlinear',
-        "$tmpdir/ident.xfm", "$tmpdir/reg.xfm",
+        "$opt{'tmpdir'}/ident.xfm", "$opt{'tmpdir'}/reg.xfm",
         $outxfm);
 
 # create the resampled file if required

@@ -22,7 +22,7 @@ use File::Temp qw/ tempdir /;
 
 # until I get organised and do this properly
 my $PACKAGE = &basename($0);
-my $VERSION = '1.2.0';
+my $VERSION = '1.3.0';
 my $PACKAGE_BUGREPORT = '"Andrew Janke" <a.janke@gmail.com>';
 
 my($Help, $Usage, $me, @opt_table, $history, %opt);
@@ -34,6 +34,8 @@ $me = &basename($0);
    'quiet' => 0,
    'clobber' => 0,
    'fake' => 0,
+   'tmpdir' => undef,
+   'keeptmp' => 0,
    'mirror_dim' => 'x',
    'method' => 'minctracc',
    'align_center' => 'voxel',
@@ -61,6 +63,11 @@ $Usage = "Usage: $me [options] <infile.mnc> <align.xfm> [<outfile.mnc>]\n".
       "clobber existing files" ],
    ["-fake", "boolean", 0, \$opt{'fake'},
       "do a dry run, (echo cmds only)" ],
+   ["-tmpdir", "string", 1, \$opt{'tmpdir'},
+      "temporary directory to use" ],
+   ["-keeptmp", "boolean", 1, \$opt{'keeptmp'},
+      "keep the tmpdir after processing (dont delete)" ],
+
 
    ["Registration options", "section" ],
    ["-x",  "const", 'x', \$opt{'mirror_dim'},
@@ -89,7 +96,14 @@ $history .= '>>>> ' . join(' ', $me, @ARGV);
 die $Usage if ($#ARGV < 1);
 
 # make tmpdir
-$tmpdir = &tempdir( "$me-XXXXXXXX", TMPDIR => 1, CLEANUP => 0 );
+if(defined($opt{'tmpdir'})){
+   # just in case
+   &do_cmd('mkdir', '-p', $opt{'tmpdir'});
+   $opt{'tmpdir'} = &tempdir( "$me-XXXXXXXX", DIR => $opt{tmpdir}, CLEANUP => (($opt{'keeptmp'}) ? 0 : 1) );
+   }
+else{
+   $opt{'tmpdir'} = &tempdir( "$me-XXXXXXXX", TMPDIR => 1, CLEANUP => (($opt{'keeptmp'}) ? 0 : 1) );
+   }
 
 # get file names
 $infile = shift(@ARGV);

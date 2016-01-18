@@ -21,7 +21,7 @@ use File::Temp qw/ tempdir /;
 
 # until I get organised and do this properly
 my $PACKAGE = &basename($0);
-my $VERSION = '1.2.0';
+my $VERSION = '1.2.1';
 my $PACKAGE_BUGREPORT = '"Andrew Janke" <a.janke@gmail.com>';
 
 my($Help, $Usage, $me, @opt_table, %opt);
@@ -33,6 +33,7 @@ $me = basename($0);
    'quiet', => 0,
    'clobber' => 0,
    'fake' => 0,
+   'outtype' => '-filetype',
    'mask' => undef,
    'cutoff' => 0.01,
    'lowwer' => undef,
@@ -48,7 +49,7 @@ $me = basename($0);
    );
 
 $Help = <<HELP;
- | $me normalises a file between a max and minimum (possibly) 
+ | $me normalises a file between a max and minimum (possibly)
  |       using two histogram pct's.
  |
  | Problems or comments should be sent to: a.janke\@gmail.com
@@ -61,42 +62,53 @@ $Usage = "\nUsage: $me [options] <in.mnc> <out.mnc>\n".
    ["General Options", "section" ],
    ["-version", "call", 0, \&print_version_info,
       "print version and exit" ],
-   ["-verbose", "boolean", 0, \$opt{'verbose'}, 
+   ["-verbose", "boolean", 0, \$opt{'verbose'},
       "be verbose" ],
-   ["-quiet", "boolean", 0, \$opt{'quiet'}, 
+   ["-quiet", "boolean", 0, \$opt{'quiet'},
       "be quiet" ],
-   ["-clobber", "boolean", 0, \$opt{'clobber'}, 
+   ["-clobber", "boolean", 0, \$opt{'clobber'},
       "clobber existing files" ],
    ["-fake", "boolean", 0, \$opt{'fake'},
       "do a dry run, (echo cmds only)" ],
-   
+
+   ["-byte", "copy", undef, \$opt{'outtype'},
+      "Output in byte format"],
+   ["-short", "copy", undef, \$opt{'outtype'},
+      "Output in short format"],
+   ["-int", "copy", undef, \$opt{'outtype'},
+      "Output in int format"],
+   ["-float", "copy", undef, \$opt{'outtype'},
+      "Output in float format"],
+   ["-double", "copy", undef, \$opt{'outtype'},
+      "Output in double format"],
+
    ["Normalisation Options", "section" ],
    ["-mask", "string",  1, \$opt{'mask_fn'},
       "calculate the image normalisation within a mask",
       "<mask.mnc>"],
-   ["-clamp", "boolean", 0, \$opt{'clamp'}, 
+   ["-clamp", "boolean", 0, \$opt{'clamp'},
       "Force the ouput range between limits" ],
-   ["-cutoff", "float", 1, \$opt{'cutoff'}, 
+   ["-cutoff", "float", 1, \$opt{'cutoff'},
       "cutoff value to use to calculate thresholds by a histogram PcT in %." ],
-   ["-lower", "float", 1, \$opt{'lower'}, 
+   ["-lower", "float", 1, \$opt{'lower'},
       "lower real value to use" ],
-   ["-upper", "float", 1, \$opt{'upper'}, 
+   ["-upper", "float", 1, \$opt{'upper'},
       "upper real value to use" ],
-   ["-out_floor", "float", 1, \$opt{'out_floor'}, 
+   ["-out_floor", "float", 1, \$opt{'out_floor'},
       "output files maximum" ],
-   ["-out_ceil", "float", 1, \$opt{'out_ceil'}, 
+   ["-out_ceil", "float", 1, \$opt{'out_ceil'},
       "output files minimum" ],
-   
+
    ["Threshold Options", "section" ],
    ["-threshold", "boolean",  0, \$opt{'threshold'},
       "Threshold the image (set values below threshold_perc to -out_floor"],
-   ["-threshold_perc", "float", 1, \$opt{'threshold_perc'}, 
+   ["-threshold_perc", "float", 1, \$opt{'threshold_perc'},
       "threshold percentage (0.1 == lower 10% of intensity range)" ],
-   ["-threshold_bmt", "boolean", 1, \$opt{'threshold_bmt'}, 
+   ["-threshold_bmt", "boolean", 1, \$opt{'threshold_bmt'},
       "use the resulting image BiModalT as the threshold" ],
-   ["-threshold_blur", "float", 1, \$opt{'threshold_blur'}, 
+   ["-threshold_blur", "float", 1, \$opt{'threshold_blur'},
       "blur FWHM for intensity edges then thresholding"],
-   ["-threshold_mask", "string", 1, \$opt{'threshold_mask'}, 
+   ["-threshold_mask", "string", 1, \$opt{'threshold_mask'},
       "file in which to store the threshold mask"],
    );
 
@@ -162,15 +174,16 @@ $eqn .= " * " . ($opt{out_ceil} - $opt{out_floor}) . " + $opt{out_floor};";
 # do the rescaling
 print STDOUT "*** scaling $infile in range [$opt{lower}:$opt{upper}]\n" if !$opt{'quiet'};
 print STDOUT "*** outputting in the range  [$opt{out_floor}:$opt{out_ceil}]\n" if !$opt{'quiet'};
-&do_cmd('minccalc', '-clobber', '-expression', 
-        $eqn,
-        $infile, (($opt{'threshold'}) ? "$tmpdir/rescaled.mnc" : $outfile));
+&do_cmd('minccalc', '-clobber',
+   $opt{'outtype'},
+   '-expression', $eqn,
+   $infile, (($opt{'threshold'}) ? "$tmpdir/rescaled.mnc" : $outfile));
 
 
 # threshold if required
 if($opt{'threshold'}){
    my ($thresh, $maskfn);
-   
+
    # figure out the threshold for masking
    if($opt{'threshold_bmt'}){
       chomp($thresh = `mincstats -quiet -biModalT $tmpdir/rescaled.mnc`);
@@ -178,20 +191,20 @@ if($opt{'threshold'}){
    else{
       $thresh = $opt{'out_ceil'} * $opt{'threshold_perc'};
       }
-   
+
    # first make a mask
    $maskfn = (defined $opt{'threshold_mask'})
       ? $opt{'threshold_mask'} : "$tmpdir/thresh-mask.mnc";
    &do_cmd('mincmath', '-clobber',
-      '-gt', 
+      '-gt',
       '-const', $thresh,
       "$tmpdir/rescaled.mnc", $maskfn);
-   
+
    # blur it
    &do_cmd('mincblur', '-clobber',
       '-fwhm', $opt{'threshold_blur'},
       $maskfn, "$tmpdir/thresh-mask");
-   
+
    # then apply it
    &do_cmd('mincmath', '-clobber',
       '-mult',
@@ -203,7 +216,7 @@ if($opt{'threshold'}){
 
 
 
-sub do_cmd { 
+sub do_cmd {
    print STDOUT "@_\n" if $opt{'verbose'};
    if(!$opt{'fake'}){
       system(@_) == 0 or die;

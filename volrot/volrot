@@ -17,7 +17,7 @@ use Getopt::Tabular;
 use File::Basename;
 use File::Temp qw/ tempdir /;
 
-my($Help, $Usage, $me, @opt_table, $tmpdir, %opt);
+my($Help, $Usage, $me, $history, @opt_table, $tmpdir, %opt);
 my(@args, $arg_string, $infile, $outfile);
 
 $me = basename($0);
@@ -28,7 +28,7 @@ $tmpdir = "/tmp/$me-$$";
         'x_rot' => 0,
         'y_rot' => 0,
         'z_rot' => 0,
-        'xfm_fname' => undef, 
+        'xfm_fname' => undef,
         );
 
 $Help = <<HELP;
@@ -41,28 +41,32 @@ $Usage = "\nUsage: $me [options] <in.mnc> <out.mnc>\n".
            "       $me -help to list options\n\n";
 
 @opt_table = (
-   ["-verbose", "boolean", 0, \$opt{'verbose'}, 
+   ["-verbose", "boolean", 0, \$opt{'verbose'},
       "be verbose" ],
-   ["-clobber", "boolean", 0, \$opt{'clobber'}, 
+   ["-clobber", "boolean", 0, \$opt{'clobber'},
       "clobber existing files" ],
    ["-fake", "boolean", 0, \$opt{fake},
       "do a dry run, (echo cmds only)" ],
-      
-   ["-right", "const", -90, \$opt{'z_rot'}, 
+
+   ["-right", "const", -90, \$opt{'z_rot'},
       "rotate 90 degrees to patients right (Default)" ],
-   ["-left", "const", 90, \$opt{'z_rot'}, 
+   ["-left", "const", 90, \$opt{'z_rot'},
       "rotate 90 degrees to patients left" ],
-   
-   ["-x_rotation", "float", 1, \$opt{'x_rot'}, 
+
+   ["-x_rotation", "float", 1, \$opt{'x_rot'},
       "x rotation" ],
-   ["-y_rotation", "float", 1, \$opt{'y_rot'}, 
+   ["-y_rotation", "float", 1, \$opt{'y_rot'},
       "y rotation" ],
-   ["-z_rotation", "float", 1, \$opt{'z_rot'}, 
+   ["-z_rotation", "float", 1, \$opt{'z_rot'},
       "z rotation" ],
-      
-   ["-xfm_fname", "string",  1, \$opt{xfm_fname}, 
+
+   ["-xfm_fname", "string",  1, \$opt{xfm_fname},
       "Keep and save the resulting xfm file" ],
    );
+
+# get history string
+chomp($history = `date`);
+$history .= '>>>> ' . join(' ', $me, @ARGV);
 
 # Check arguments
 &Getopt::Tabular::SetHelp ($Help, $Usage);
@@ -84,7 +88,7 @@ if($opt{x_rot} == 0 && $opt{y_rot} == 0 && $opt{z_rot} == 0){
    }
 
 # figure out the centre of the volume
-@args = ('mincinfo', 
+@args = ('mincinfo',
          '-attvalue', 'xspace:start', '-attvalue', 'xspace:step', '-dimlength', 'xspace',
          '-attvalue', 'yspace:start', '-attvalue', 'yspace:step', '-dimlength', 'yspace',
          '-attvalue', 'zspace:start', '-attvalue', 'zspace:step', '-dimlength', 'zspace',
@@ -111,17 +115,21 @@ else{
 
 # make transform
 unlink $opt{xfm_fname};
-&do_cmd('param2xfm', '-clobber', 
+&do_cmd('param2xfm', '-clobber',
         '-rotations', $opt{x_rot}, $opt{y_rot}, $opt{'z_rot'},
         '-center', $x_cor, $y_cor, $z_cor,
         $opt{xfm_fname});
 
 # resample the volume
-
 &do_cmd('mincresample', '-clobber',
         '-use_input_sampling', '-nearest_neighbour',
         '-transformation', $opt{xfm_fname},
         $infile, $outfile);
+
+# add the history string to the output file
+&do_cmd('minc_modify_header',
+   '-sappend', ":history='$history'",
+   $outfile);
 
 
 sub do_cmd {

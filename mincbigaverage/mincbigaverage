@@ -362,7 +362,7 @@ files. (>1GB each). There is also some code included to perform "robust"
 averaging in which only the most common features are kept via down-weighting
 outliers beyond a standard deviation.
          
-   $ mincbigaverage --verbose --robust_average \
+   $ mincbigaverage --verbose --robust \
        in1.mnc in2.mnc in3.mnc in4.mnc avg.mnc
          
 =head1 DESCRIPTION

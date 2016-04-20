@@ -1,0 +1,256 @@
+#! /usr/bin/env perl
+#
+# "cleanse" a MINC file by removing unused/empty variables
+#
+# Andrew Janke - a.janke@gmail.com
+# Australian National University
+
+
+$| = 0;
+
+use strict;
+use warnings "all";
+use Getopt::Tabular;
+use File::Basename;
+use File::Temp qw/ tempdir /;
+
+
+my($Help, $Usage, $me, @opt_table, %opt);
+my(@args, $infile, $outfile);
+
+# Argument variables and table
+$me = &basename($0);
+%opt = (
+   'verbose' => 0,
+   'clobber' => 0,
+   'fake' => 0,
+   );
+
+$Help = <<HELP;
+| $me removes unused variables from a MINC file
+|    This is something that in theory you cannot 
+|    do with netCDF, but there is always a way.
+|
+| Why might you want to do this? Well I use it to
+|    further anonymise a header as the variable
+|    names are still left after mincanon.
+|
+| Problems or comments should be sent to: a.janke\@gmail.com
+HELP
+
+$Usage = "Usage: $me [options] <in.mnc> <out.mnc>\n".
+         "       $me -help to list options\n\n";
+
+@opt_table = (
+   ["-verbose", "boolean", 0, \$opt{'verbose'},
+      "be verbose"],
+   ["-clobber", "boolean", 0, \$opt{'clobber'},
+      "clobber existing files"],
+   ["-fake", "boolean", 0, \$opt{fake},
+      "do a dry run, (echo cmds only)" ],
+   );
+
+# check arguments
+&Getopt::Tabular::SetHelp($Help, $Usage);
+&GetOptions (\@opt_table, \@ARGV) || exit 1;
+die $Usage if ($#ARGV != 1);
+$infile = shift(@ARGV);
+$outfile = shift(@ARGV);
+
+# check for files
+die "$me: Couldn't find input file: $infile\n\n" if (!-e $infile);
+if(defined($outfile) && -e $outfile && !$opt{clobber}){
+   die "$me: $outfile exists, -clobber to overwrite\n\n";
+   }
+
+# make tmpdir
+$opt{tmpdir} = &tempdir( "$me-XXXXXXXX", DIR => $opt{tmpdir}, CLEANUP => 1);
+
+my($dump, $cleaned);
+
+# first dump and mash the header
+$dump = `mincheader $infile`;
+$cleaned = &cleanbuf($dump);
+
+open(CDF, ">$opt{'tmpdir'}/cleaned.cdf");
+print CDF $cleaned;
+close(CDF);
+
+# then make the new file and copy the data back in
+&do_cmd('mincgen', '-o', $outfile, "$opt{'tmpdir'}/cleaned.cdf");
+&do_cmd('minccopy', $infile, $outfile);
+
+
+
+sub do_cmd { 
+   print STDOUT "@_\n" if $opt{verbose};
+   if(!$opt{fake}){
+      system(@_) == 0 or die;
+      }
+   }
+
+# search for unused vars via dodgy MINC netcdf parser MKII
+#  MKI is generally awfull so lets skip straight to MKII.
+sub cleanbuf {
+   my(@used_vars, @unused_vars, 
+      $inbuf, $buf, $clean_buf, $var,
+      $varstate, $varreadstate, $varattnum,
+      $globstate, $datastate, $varname);
+   
+   $inbuf = shift(@_);
+   
+   # a few arrays to store variable names
+   @used_vars = ();
+   @unused_vars = ();
+   
+   # vars used in parsing
+   $buf = "";
+   $varstate = 0;
+   $varreadstate = 0;
+   $varattnum = 0;
+   $globstate = 0;
+   $datastate = 0;
+   $varname = undef;
+   
+   # first pass to count att #'s in vars
+   foreach (split(/\n/, $inbuf)){
+      
+      if (m/^variables\:/){
+         $varstate = 1;
+         $buf .= "$_\n";
+         next;
+         }
+      
+      if($varreadstate == 1){
+         if(m/^\t\t$varname\:/){
+            $varattnum++;
+            #$buf .= "VRA: $_";
+            $buf .= "$_\n";
+            next;
+            }
+         
+         # be incredibly dodgy and append things
+         if(m/^\t\t\t/){
+            chomp($buf);
+            $_ =~ s/^\t\t\t//;
+            $buf .= "$_\n";
+            next;
+            }
+         
+         # else fall through to below
+         }
+      
+      # parsing variables
+      if ($varstate == 1){
+         # check if we are done (skip global vars)
+         if(m/^\/\/\ global\ attributes\:/){
+            $varstate = 0;
+            $varreadstate = 0;
+            $globstate = 1;
+            
+            # check if the last variable should be added
+            if($varattnum > 0){
+               push(@used_vars, $varname);
+               }
+            else{
+               push(@unused_vars, $varname);
+               }
+            
+            
+            # we dont want no global vars
+            # $buf .= $_;
+            next;
+            }
+         
+         if (m/^\t(int|double|short)\ ((\w|\-)*)(\ |\()/){
+            # save the previous variable if required
+            if(defined($varname)){
+               if($varattnum > 0){
+                  push(@used_vars, $varname);
+                  }
+               else{
+                  push(@unused_vars, $varname);
+                  }
+               }
+            
+            chomp($varname = $_);
+            $varname =~ s/^\t(int|double|short)\ //;
+            $varname =~ s/(\ |\().*$//;
+            $varreadstate = 1;
+            $varattnum = 0;
+            }
+         
+         #$buf .= "V: $_";
+         $buf .= "$_\n";
+         next;
+         }
+      
+      if ($globstate == 1){
+         # check if we are done
+         if(m/^data\:/){
+            $globstate = 0;
+            $datastate = 1;
+            $buf .= "$_\n";
+            next;
+            }
+         
+         # we dont want no dirty global vars
+         # $buf .= "";
+         next;
+         }
+      
+      if ($datastate == 1){
+         # check if we are done
+         if(m/^}/){
+            $datastate = 0;
+            $buf .= "$_\n";
+            next;
+            }
+         
+         #$buf .= "D: $_";
+         $buf .= "$_\n";
+         next;
+         }
+      
+      #$buf .= "?: $_";
+      $buf .= "$_\n";
+      }
+   
+   # second pass...
+   # time to die (unwanted variables)
+   $clean_buf = "";
+   foreach (split(/\n/, $buf)){
+      
+      # check for instances of vars we dont want
+      foreach $var (@unused_vars){
+         
+         # variable section
+         if (m/^\t(int|double|short)\ $var(\ |\()/){
+            print STDERR "[VAR]: ($var)\n" if $opt{'verbose'};
+            $_ = "";
+            }
+         
+         # bit in a variable attribute section
+         if (m/\"$var(\\n?)\"/){
+            print STDERR "[VARATT]: ($var)\n" if $opt{'verbose'};
+            
+            # var at the start or end
+            $_ =~ s/\"$var\\n\"\,//;
+            $_ =~ s/\,\"$var\\n\"//;
+            }
+         
+         # data section
+         if(m/^\ $var \=\ (\_|0)\ \;/){
+            print STDERR "[DATA]: ($var)\n" if $opt{'verbose'};
+            $_ = "";
+            }
+         }
+      
+      $clean_buf .= "$_\n";
+      }
+   
+   print STDERR "USED:   " . join(" ", @used_vars) . "\n" if $opt{'verbose'};
+   print STDERR "UNUSED: " . join(" ", @unused_vars) . "\n" if $opt{'verbose'};
+   
+   return $clean_buf;
+   }

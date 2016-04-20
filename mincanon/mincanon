@@ -1,0 +1,109 @@
+#! /usr/bin/env perl
+#
+# have a (better) go at anonymising a MINC file
+#
+# Andrew Janke - a.janke@gmail.com
+# Australian National University
+
+
+$| = 0;
+
+use strict;
+use warnings "all";
+use Getopt::Tabular;
+use File::Basename;
+
+my %keep = (
+   'xspace' => 1,
+   'yspace' => 1, 
+   'zspace' => 1, 
+   'time' => 1, 
+   'vector_dimension' => 1,
+   'rootvariable' => 1, 
+   'image' => 1,
+   'image-min' => 1, 
+   'image-max' => 1,
+   );
+
+
+my($Help, $Usage, $me, @opt_table, %opt);
+my(@args, $args, @infiles);
+
+# Argument variables and table
+$me = &basename($0);
+%opt = (
+   'verbose' => 0,
+   'clobber' => 0,
+   'fake' => 0,
+   );
+
+$Help = <<HELP;
+| $me de-identifies MINC files by removing everything
+|    it can find that is not critical to the image
+|
+| NB: $me works on the files in question in place!
+|
+| Problems or comments should be sent to: a.janke\@gmail.com
+HELP
+
+$Usage = "Usage: $me [options] <in1.mnc> [<in2.mnc> [...]]\n".
+         "       $me -help to list options\n\n";
+
+@opt_table = (
+   ["-verbose", "boolean", 0, \$opt{'verbose'},
+      "be verbose"],
+   ["-clobber", "boolean", 0, \$opt{'clobber'},
+      "clobber existing files"],
+   ["-fake", "boolean", 0, \$opt{fake},
+      "do a dry run, (echo cmds only)" ],
+   );
+
+# check arguments
+&Getopt::Tabular::SetHelp($Help, $Usage);
+&GetOptions (\@opt_table, \@ARGV) || exit 1;
+die $Usage if ($#ARGV < 0);
+@infiles = @ARGV;
+
+my($i, $v, $a, $buf, @vars);
+
+# check for infiles
+foreach $i (@infiles){
+   die "$me: Couldn't find input file: $i\n\n" if (!-e $i);
+   }
+
+# for each file
+foreach $i (@infiles){
+   print STDOUT "[$i]\n";
+   
+   # find the varnames in the file
+   chomp($buf = `mincinfo -varnames $i`);
+   (@vars) = split(/\ /, $buf);
+   
+   # for each var
+   foreach $v (@vars){
+      
+      # skip the ones we want
+      next if (defined($keep{$v}));
+      
+      # otherwise remove it and its attributes
+      chomp($buf = `mincinfo -varatts $v $i`);
+      
+      foreach $a (split(/\ /, $buf)){
+         print STDOUT "  | removing $v:$i\n";
+         &do_cmd('minc_modify_header', '-delete', "$v:$a", $i);
+         }
+      }
+   
+   # then remove the history (for possible conversion information)
+   print STDOUT "  | removing :history\n";
+   &do_cmd('minc_modify_header', '-delete', ':history', $i);
+   }
+
+
+
+sub do_cmd { 
+   print STDOUT "@_\n" if $opt{verbose};
+   if(!$opt{fake}){
+      system(@_) == 0 or die;
+      }
+   }

@@ -1,0 +1,30 @@
+#! /usr/bin/env perl
+#
+# Andrew Janke - rotor@cmr.uq.edu.au
+# Center for Magnetic Resonance
+# The University of Queensland
+# http://www.cmr.uq.edu.au/~rotor
+#
+# USE AT OWN RISK!  THIS MAY MUNGE YOUR MINC FILES HEADER!
+
+use warnings "all";
+use File::Basename;
+
+$me = &basename($0);
+if($#ARGV == -1){
+   die "\n+++WARNING: THIS SCRIPT MAY MUNGE YOUR FILE PERMANENTLY!+++\n\n".
+       "Usage: $me <file1_to_clean.mnc> [<file2.mnc> [...]]\n\n";
+   }
+
+foreach $file (@ARGV){ 
+   print " + Working on $file\n";
+
+   (@yukky_vars) = split(' ', `mincinfo -varnames $file`);
+
+   foreach $var (grep {/dicom/} @yukky_vars){
+      foreach (split(' ', `mincinfo -varatts $var $file`)){
+         print " | [$file] - removing $var:$_\n";
+         system('minc_modify_header', '-delete', "$var:$_", $file) == 0 or die;
+         }
+      }
+   }

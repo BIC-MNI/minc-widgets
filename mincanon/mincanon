@@ -12,16 +12,17 @@ use strict;
 use warnings "all";
 use Getopt::Tabular;
 use File::Basename;
+use File::Temp qw/ tempdir /;
 
 my %keep = (
    'xspace' => 1,
-   'yspace' => 1, 
-   'zspace' => 1, 
-   'time' => 1, 
+   'yspace' => 1,
+   'zspace' => 1,
+   'time' => 1,
    'vector_dimension' => 1,
-   'rootvariable' => 1, 
+   'rootvariable' => 1,
    'image' => 1,
-   'image-min' => 1, 
+   'image-min' => 1,
    'image-max' => 1,
    );
 
@@ -33,7 +34,6 @@ my(@args, $args, @infiles);
 $me = &basename($0);
 %opt = (
    'verbose' => 0,
-   'clobber' => 0,
    'fake' => 0,
    );
 
@@ -52,8 +52,6 @@ $Usage = "Usage: $me [options] <in1.mnc> [<in2.mnc> [...]]\n".
 @opt_table = (
    ["-verbose", "boolean", 0, \$opt{'verbose'},
       "be verbose"],
-   ["-clobber", "boolean", 0, \$opt{'clobber'},
-      "clobber existing files"],
    ["-fake", "boolean", 0, \$opt{fake},
       "do a dry run, (echo cmds only)" ],
    );
@@ -64,44 +62,52 @@ $Usage = "Usage: $me [options] <in1.mnc> [<in2.mnc> [...]]\n".
 die $Usage if ($#ARGV < 0);
 @infiles = @ARGV;
 
-my($i, $v, $a, $buf, @vars);
+
+
+my($i, $workingi, $v, $a, $buf, $tmpdir, @vars);
 
 # check for infiles
 foreach $i (@infiles){
    die "$me: Couldn't find input file: $i\n\n" if (!-e $i);
    }
 
+# make tmpdir
+$tmpdir = &tempdir( "$me-XXXXXXXX", TMPDIR => 1, CLEANUP => 1);
+
 # for each file
 foreach $i (@infiles){
    print STDOUT "[$i]\n";
-   
+   &do_cmd('cp', $i, $tmpdir);
+   $workingi = $tmpdir . "/" . &basename($i);
+
    # find the varnames in the file
-   chomp($buf = `mincinfo -varnames $i`);
+   chomp($buf = `mincinfo -varnames $workingi`);
    (@vars) = split(/\ /, $buf);
-   
+
    # for each var
    foreach $v (@vars){
-      
+
       # skip the ones we want
       next if (defined($keep{$v}));
-      
+
       # otherwise remove it and its attributes
-      chomp($buf = `mincinfo -varatts $v $i`);
-      
+      chomp($buf = `mincinfo -varatts $v $workingi`);
+
       foreach $a (split(/\ /, $buf)){
          print STDOUT "  | removing $v:$i\n";
-         &do_cmd('minc_modify_header', '-delete', "$v:$a", $i);
+         &do_cmd('minc_modify_header', '-delete', "$v:$a", $workingi);
          }
       }
-   
+
    # then remove the history (for possible conversion information)
    print STDOUT "  | removing :history\n";
-   &do_cmd('minc_modify_header', '-delete', ':history', $i);
+   &do_cmd('minc_modify_header', '-delete', ':history', $workingi);
+   &do_cmd('cp', $workingi, $i)
    }
 
 
 
-sub do_cmd { 
+sub do_cmd {
    print STDOUT "@_\n" if $opt{verbose};
    if(!$opt{fake}){
       system(@_) == 0 or die;

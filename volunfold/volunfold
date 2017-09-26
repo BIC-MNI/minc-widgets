@@ -1,6 +1,17 @@
 #! /usr/bin/env perl
 #
-# take a hack at unfolding a file
+# take a hack at unfolding a file.
+#
+# Andrew Janke - a.janke@gmail.com
+#
+# Copyright Andrew Janke, The University of Queensland.
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies.  The
+# author and the University make no representations about the
+# suitability of this software for any purpose.  It is provided "as is"
+# without express or implied warranty.
+
 
 $| = 1;
 
@@ -16,13 +27,14 @@ $me = basename($0);
 %opt = ('verbose' => 0,
         'clobber' => 0,
         'fake' => 0,
-        'x_rot' => 0,
-        'y_rot' => 0,
-        'z_rot' => 0,
         );
 
 $Help = <<HELP;
  | $me is an attempt to remove folding in a minc volume
+ | This is achieved by scanning the file (in each dimension)
+ | looking for the slice with the lowest mean. This means
+ | that it will work best with "single blob" style images
+ | such as heads.
  |
  | Problems or comments should be sent to: a.janke\@gmail.com
 HELP

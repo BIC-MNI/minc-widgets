@@ -1,4 +1,18 @@
 #! /usr/bin/env perl
+#
+# convert an ecat file to hdf5. This is a very simple converter that
+# makes a number of assumptions regarding the structure oft he ecat
+# file. Your mileage will vary.
+#
+# Andrew Janke - a.janke@gmail.com
+#
+# Copyright Andrew Janke, The University of Queensland.
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies.  The
+# author and the University make no representations about the
+# suitability of this software for any purpose.  It is provided "as is"
+# without express or implied warranty.
 
 
 use warnings "all";

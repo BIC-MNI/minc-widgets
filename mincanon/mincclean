@@ -3,7 +3,14 @@
 # "cleanse" a MINC file by removing unused/empty variables
 #
 # Andrew Janke - a.janke@gmail.com
-# Australian National University
+#
+# Copyright Andrew Janke, The University of Queensland.
+# Permission to use, copy, modify, and distribute this software and its
+# documentation for any purpose and without fee is hereby granted,
+# provided that the above copyright notice appear in all copies.  The
+# author and the University make no representations about the
+# suitability of this software for any purpose.  It is provided "as is"
+# without express or implied warranty.
 
 
 $| = 0;
@@ -29,11 +36,14 @@ $me = &basename($0);
 $Help = <<HELP;
 | $me removes unused variables from a MINC file
 |    This is something that in theory you cannot 
-|    do with netCDF, but there is always a way.
+|    do with netCDF/HDF5, but there is always a way.
 |
 | Why might you want to do this? Well I use it to
 |    further anonymise a header as the variable
 |    names are still left after mincanon.
+| 
+| Beware of this thing, it uses a parser that messes
+|    in the dumped HDF5 header, things can go wrong.
 |
 | Problems or comments should be sent to: a.janke\@gmail.com
 HELP
@@ -79,7 +89,6 @@ close(CDF);
 # then make the new file and copy the data back in
 &do_cmd('mincgen', '-o', $outfile, "$opt{'tmpdir'}/cleaned.cdf");
 &do_cmd('minccopy', $infile, $outfile);
-
 
 
 sub do_cmd { 

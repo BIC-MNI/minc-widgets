@@ -5,6 +5,8 @@
 # Andrew Janke - a.janke@gmail.com
 # Vladimir S. FONOV - vladimir.fonov@gmail.com
 
+cmake_minimum_required(VERSION 3.10)
+
 PROJECT(minc-widgets)
 
 INSTALL(PROGRAMS ecat2hdf5/ecat2hdf5

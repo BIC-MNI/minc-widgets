@@ -1,0 +1,39 @@
+# Citation metadata for minc-widgets (Citation File Format, https://citation-file-format.github.io/).
+# The author list comes from the commit history and from the history comments in the files.
+
+cff-version: 1.2.0
+title: minc-widgets
+message: >-
+  If you use this software, please cite it using the metadata from this file.
+type: software
+authors:
+  - given-names: Andrew L.
+    family-names: Janke
+    orcid: "https://orcid.org/0000-0003-0547-5171"
+  - given-names: Vladimir
+    family-names: Fonov
+    email: vladimir.fonov@gmail.com
+    affiliation: McGill University
+    orcid: "https://orcid.org/0000-0003-3402-7749"
+  - given-names: Ben
+    family-names: Darwin
+  - given-names: Gabriel A.
+    family-names: Devenyi
+    email: gdevenyi@gmail.com
+    affiliation: Douglas Mental Health University Institute
+    orcid: "https://orcid.org/0000-0002-7766-1187"
+  - given-names: Guenther
+    family-names: Grabner
+  - given-names: Mark
+    family-names: Griffin
+  - given-names: Carlo
+    family-names: Hamalainen
+repository-code: "https://github.com/BIC-MNI/minc-widgets"
+abstract: >-
+  Collection of MINC widgets: Perl and shell scripts for common operations on
+  MINC files.
+keywords:
+  - MINC
+  - medical imaging
+  - neuroimaging
+  - scripts
